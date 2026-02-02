@@ -11,7 +11,7 @@ def import_pdf(filename):
     Args:
         filename (str): Name of the PDF file to import
     
-    Returns:
+    Returns:o
         str: Extracted text from the PDF
     """
     docs_folder = "docs"

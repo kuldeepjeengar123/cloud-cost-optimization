@@ -1,4 +1,4 @@
-# ARRK Docs Agent AWS
+# Docs Agent
 
 Document processing and AI agent for AWS deployment.
 
