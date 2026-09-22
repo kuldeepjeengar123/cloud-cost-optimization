@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast,sys; [ast.parse\\(open\\(f,encoding='utf-8'\\).read\\(\\),f\\) for f in ['main.py','src/config.py','src/actions/executor.py','src/actions/review.py','src/actions/__init__.py']]; print\\('syntax OK'\\)\")",
+      "Bash(python -c \"from src.config import load_config; from src.actions import review_and_apply, get_executor, Action; cfg=load_config\\(\\); print\\('applied_folder ->', cfg.applied_folder\\); print\\('executor ->', type\\(get_executor\\(cfg\\)\\).__name__\\)\")",
+      "Bash(python -c \"import csv; r=csv.DictReader\\(open\\('docs/region_cost.csv',encoding='utf-8'\\)\\); print\\('columns:', r.fieldnames\\); rows=list\\(r\\); print\\('sample row:', rows[0] if rows else None\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import json,os; p='outputs/pending_actions.json'; d=json.load\\(open\\(p\\)\\) if os.path.exists\\(p\\) else {}; t=[k for k,v in d.items\\(\\) if v.get\\('run_id'\\)=='insights_TEST']; [d.pop\\(k\\) for k in t]; json.dump\\(d,open\\(p,'w'\\),indent=2\\) if t else None; print\\('removed test entries:', t\\)\")",
+      "Bash(node --check web/app.js)",
+      "Bash(python -c \"import server; print\\('server import OK; backend =', server.APP_CFG.action_backend, '| applied ->', server.APP_CFG.applied_folder\\)\")",
+      "Bash(python server.py 8799)",
+      "Bash(curl -s \"http://127.0.0.1:8799/api/action?id=act_b2a4de6cd76a\")",
+      "Bash(curl -s -X POST \"http://127.0.0.1:8799/api/apply\" -H \"Content-Type: application/json\" -d '{\"id\":\"act_b2a4de6cd76a\",\"decision\":\"apply\"}')",
+      "Bash(python -c \"import json; p='outputs/pending_actions.json'; d=json.load\\(open\\(p\\)\\); t=[k for k,v in d.items\\(\\) if v.get\\('run_id'\\)=='insights_WEBTEST']; [d.pop\\(k\\) for k in t]; json.dump\\(d,open\\(p,'w'\\),indent=2\\); print\\('removed test entries:', t\\)\")",
+      "Bash(rm -f _repro_step33.py)",
+      "Bash(python main.py --no-apply)",
+      "Bash(python -c \"import json; d=json.load\\(open\\('outputs/pending_actions.json'\\)\\); a=d if isinstance\\(d,list\\) else d.get\\('actions',list\\(d.values\\(\\)\\) if isinstance\\(d,dict\\) else []\\); print\\('stored actions:', len\\(a\\)\\); [print\\(' ', x.get\\('status'\\), '|', 'exec' if x.get\\('executable'\\) else 'manual', '|', x.get\\('title',''\\)[:70]\\) for x in a]\")",
+      "Bash(tee outputs/_srv.log)",
+      "Bash(curl -s http://127.0.0.1:8799/api/actions)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('GET /api/actions ->', len\\(d['actions']\\), 'actions; first status:', d['actions'][0]['status']\\)\")",
+      "Bash(python mock_aws.py 8788)",
+      "Bash(tee outputs/_mock_srv.log)",
+      "Bash(curl -s \"http://127.0.0.1:8788/aws/ce/cost-and-usage?group_by=INSTANCE_TYPE&granularity=MONTHLY\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('After resize, by instance type:'\\); [print\\(' ',g['Keys'][0], '\\\\$'+str\\(round\\(float\\(g['Metrics']['UnblendedCost']['Amount']\\),2\\)\\)\\) for g in d['ResultsByTime'][0]['Groups']]\")",
+      "Bash(python -c \"import json; d=json.load\\(open\\('outputs/mock_state.json'\\)\\); print\\('instances:', [\\(i['name'],i['instance_type'],i['state']\\) for i in d['instances']]\\)\")",
+      "Bash(curl -s -X POST http://127.0.0.1:8788/aws/reset)",
+      "Bash(python -c \"import server; import main; from src.inputs.factory import build_sources; from src.actions.executor import get_executor; print\\('app imports OK'\\)\")",
+      "Bash(python -c \"import json; d=json.load\\(open\\('outputs/mock_state.json'\\)\\); print\\('mock_state.json:', len\\(d['instances']\\), 'instances, all', set\\(i['state'] for i in d['instances']\\)\\)\")",
+      "Bash(python server.py 8771)",
+      "Bash(tee outputs/_app.log)",
+      "Bash(curl -s http://127.0.0.1:8771/api/aws/fleet)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('available:',d['available'],'running:',d['running_count'],'cost/mo: \\\\$'+str\\(d['monthly_cost']\\)\\)\")",
+      "Bash(curl -s -X POST http://127.0.0.1:8788/aws/ec2/instances/i-1a7b8c9d/stop)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('running:',d['running_count'],'cost/mo: \\\\$'+str\\(d['monthly_cost']\\)\\); print\\('legacy-idle state:', [i['State']['Name'] for i in d['instances'] if i['InstanceId']=='i-1a7b8c9d'][0]\\)\")",
+      "Bash(poetry --version)"
+    ],
+    "additionalDirectories": [
+      "D:\\arrk_docs_agent_aws"
+    ]
+  }
+}

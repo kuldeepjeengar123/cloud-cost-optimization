@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Apply recommendation · AWS Cost & Ops</title>
+<link rel="stylesheet" href="/shared.css" />
+<style>
+  body{display:flex;align-items:center;justify-content:center;padding:24px}
+  .apply-card{width:100%;max-width:560px}
+  .apply-card h1{font-size:18px;margin:0 0 4px;font-weight:670}
+  .apply-card .sub{color:var(--text-muted);font-size:13px;margin-bottom:20px}
+  .apply-card .rec{font-size:16px;font-weight:630;line-height:1.4;margin:0 0 14px}
+  .apply-card .meta{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:12px 14px;font-size:13px;color:var(--text-secondary);margin-bottom:8px}
+  .apply-card .meta code{color:var(--text-primary)}
+  .apply-card .actions button{flex:1}
+  a.back{color:var(--text-muted);font-size:13px;display:inline-block;margin-top:18px}
+</style>
+</head>
+<body>
+  <div class="card apply-card">
+    <h1>Apply recommendation</h1>
+    <div class="sub">Review the change, then confirm. Executable recommendations are sent to the
+      RE team's approval queue — nothing reaches the <code id="backend">the</code> backend until
+      they stage and commit it.</div>
+    <div id="loading" class="sub">Loading action…</div>
+    <div id="detail" hidden>
+      <p class="rec" id="rec"></p>
+      <div class="meta" id="target"></div>
+      <div class="meta" id="effect"></div>
+      <div class="actions">
+        <button class="btn btn-primary" id="applyBtn" type="button">Apply change</button>
+        <button class="btn btn-danger" id="dismissBtn" type="button">Dismiss</button>
+      </div>
+      <div class="outcome" id="result" hidden></div>
+    </div>
+    <a class="back" href="/">← Back to dashboard</a>
+  </div>
+
+<script src="/shared.js"></script>
+<script>
+"use strict";
+const {esc, ICON} = Shared;
+const $ = (s) => document.querySelector(s);
+const params = new URLSearchParams(location.search);
+const id = params.get("id");
+const preDecision = params.get("decision"); // from the Teams button
+
+async function load(){
+  if(!id){ $("#loading").textContent = "Missing action id."; return; }
+  try{
+    const res = await fetch(`/api/action?id=${encodeURIComponent(id)}`);
+    const data = await res.json();
+    if(!res.ok || !data.action) throw new Error(data.error || "Not found");
+    render(data.action);
+  }catch(e){
+    $("#loading").textContent = "Could not load action: " + e.message;
+  }
+}
+
+function render(a){
+  $("#loading").hidden = true;
+  $("#detail").hidden = false;
+  // Backend the change actually runs against — was previously hardcoded to
+  // "CSV" regardless of a.backend; now reflects the real value.
+  $("#backend").textContent = (a.backend || "csv").toUpperCase();
+  $("#rec").innerHTML = `<span class="chip impact-${esc(a.impact)}">${esc(a.impact)} impact</span> ${esc(a.title)}`;
+  if(a.executable){
+    $("#target").innerHTML = `Target row → <code>${esc(a.table)}.csv</code> where <code>${esc(a.match_column)} = ${esc(a.match_value)}</code>`;
+    $("#effect").innerHTML = `Confirming sends this to the RE team's queue. Once approved and the batch is committed, that row is annotated with ${Object.keys(a.set_fields||{}).map(k=>`<code>${esc(k)}</code>`).join(", ") || "<code>applied_at</code>"} + <code>applied_at</code>.`;
+    $("#applyBtn").textContent = "Send to RE team";
+  } else {
+    $("#target").innerHTML = `No matching data row — this is a <b>manual</b> recommendation.`;
+    $("#effect").innerHTML = `Applying only marks it acknowledged; nothing changes.`;
+    $("#applyBtn").textContent = "Acknowledge";
+  }
+  if(["applied","dismissed","acknowledged"].includes(a.status)){
+    showResult(a.status === "dismissed" ? "no" : "ok",
+      a.status === "dismissed" ? "Already dismissed." : "Already " + a.status + ".",
+      a.result_note);
+    disable();
+  }
+  $("#applyBtn").onclick = () => submit("apply");
+  $("#dismissBtn").onclick = () => submit("dismiss");
+  if(preDecision === "dismiss") $("#dismissBtn").focus();
+}
+
+function disable(){ $("#applyBtn").disabled = true; $("#dismissBtn").disabled = true; }
+function showResult(kind, title, body){
+  const r = $("#result");
+  r.hidden = false;
+  r.className = "outcome " + kind;
+  const icon = kind === "ok" ? ICON.check : kind === "no" ? ICON.x : ICON.clock;
+  r.innerHTML = `${icon}<div><span class="oh">${esc(title)}</span>${body ? ` <span class="ob">${esc(body)}</span>` : ""}</div>`;
+}
+
+async function submit(decision){
+  disable();
+  showResult("wait", decision === "dismiss" ? "Dismissing…" : "Applying…");
+  try{
+    const res = await fetch("/api/apply", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({id, decision}),
+    });
+    const data = await res.json();
+    showResult(data.ok ? "ok" : "no", data.message || (data.ok ? "Done." : "Failed."));
+    if(!data.ok && !data.already){ $("#applyBtn").disabled=false; $("#dismissBtn").disabled=false; }
+  }catch(e){
+    showResult("no", "Request failed: " + e.message);
+    $("#applyBtn").disabled=false; $("#dismissBtn").disabled=false;
+  }
+}
+
+load();
+</script>
+</body>
+</html>
