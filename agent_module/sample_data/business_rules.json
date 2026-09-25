@@ -1,0 +1,17 @@
+{
+  "cost_centre_by_account": {
+    "123456789012": "CC-1001-Platform-Engineering"
+  },
+  "cost_centre_by_service": {
+    "Amazon EC2": "CC-2002-Compute",
+    "Amazon S3": "CC-2003-Storage",
+    "Amazon RDS": "CC-2004-Database"
+  },
+  "default_cost_centre": "CC-0000-Unassigned",
+  "environment_by_resource_prefix": {
+    "i-0ec2used": "production",
+    "i-0dev": "development",
+    "i-0stg": "staging"
+  },
+  "default_environment": "unknown"
+}

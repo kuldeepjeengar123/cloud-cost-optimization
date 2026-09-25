@@ -1,0 +1,29 @@
+{
+  "temperature": 0.2,
+  "clients": {
+    "openai_gpt": {
+      "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "base_url": "https://openrouter.ai/api/v1",
+      "timeout": 120,
+      "context_window": null,
+      "pricing": {
+        "prompt_per_1m_usd": 0,
+        "completion_per_1m_usd": 0
+      }
+    },
+    "anthropic_claude": {
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
+      "base_url": "https://openrouter.ai/api/v1",
+      "timeout": 120,
+      "context_window": null,
+      "pricing": {
+        "prompt_per_1m_usd": 0,
+        "completion_per_1m_usd": 0
+      }
+    }
+  },
+  "embeddings": {
+    "model": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+    "base_url": "https://openrouter.ai/api/v1"
+  }
+}

@@ -1,0 +1,8 @@
+column_name,data_type,description
+InstanceId,string,"Unique identifier of the EC2 instance, e.g. i-0ec2used123."
+InstanceType,string,"The EC2 instance type/size, e.g. t3.medium, m5.large. Determines the On-Demand hourly rate."
+Region,string,"AWS region the instance runs in, e.g. us-east-1."
+HoursRunning,float,"Number of hours the instance was in a running state during the billing period."
+OnDemandRate,float,"The published On-Demand hourly price for this InstanceType in this Region, in USD."
+PurchaseOption,string,"How the instance is billed: On-Demand, Reserved, or Spot. Affects the effective hourly rate."
+TotalCost,float,"HoursRunning multiplied by the effective hourly rate for the given PurchaseOption, in USD."

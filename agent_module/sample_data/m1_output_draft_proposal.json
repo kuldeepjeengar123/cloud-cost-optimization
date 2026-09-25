@@ -1,0 +1,17 @@
+{
+  "linked_account_id": "************9012",
+  "service": "Amazon Elastic Compute Cloud - Compute",
+  "region": "us-east-1",
+  "usage_type": "USE1-BoxUsage:t3.medium",
+  "usage_start_date": "2026-06-01",
+  "usage_end_date": "2026-06-30",
+  "blended_cost": 1523.47,
+  "usage_quantity": 720,
+  "usage_unit": "Hrs",
+  "currency": "USD",
+  "resource_id": "i-0ec2used123",
+  "tags": {
+    "Environment": null
+  },
+  "source_csv_type": "daily_spend"
+}

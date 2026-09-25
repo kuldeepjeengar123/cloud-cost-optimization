@@ -1,0 +1,51 @@
+{
+  "input_file": "sample_data\\sample_cost_row.json",
+  "cost_row": {
+    "service": "Amazon EC2",
+    "region": "us-east-1",
+    "billing_period": "2026-06-01 to 2026-06-30",
+    "resource_id": "i-0ec2used123",
+    "cost_usd": 1523.47,
+    "usage_quantity": 720,
+    "usage_unit": "Hours",
+    "currency": "USD"
+  },
+  "comparisons": [
+    {
+      "client": "openai_gpt",
+      "model": "nvidia/nemotron-nano-9b-v2:free",
+      "latency_seconds": 12.603,
+      "result": {
+        "service": "Amazon EC2",
+        "spend": 1523.47,
+        "currency": "USD",
+        "anomaly_flag": true,
+        "summary_sentence": "The EC2 spend for June 2026 appears anomalous due to the future billing period, which may indicate data entry errors or unexpected future usage patterns."
+      },
+      "error": null,
+      "prompt_tokens": 177,
+      "completion_tokens": 400,
+      "total_tokens": 577,
+      "context_window": null,
+      "estimated_cost_usd": 0.0
+    },
+    {
+      "client": "anthropic_claude",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
+      "latency_seconds": 6.343,
+      "result": {
+        "service": "Amazon EC2",
+        "spend": 1523.47,
+        "currency": "USD",
+        "anomaly_flag": true,
+        "summary_sentence": "EC2 instance i-0ec2used123 in us-east-1 incurred $1,523.47 for 720 hours of usage in June 2026, which is significantly higher than typical baseline usage for a single instance and may indicate unexpected scaling, misconfiguration, or prolonged high-utilization workload."
+      },
+      "error": null,
+      "prompt_tokens": 181,
+      "completion_tokens": 120,
+      "total_tokens": 301,
+      "context_window": null,
+      "estimated_cost_usd": 0.0
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+column_name,data_type,description
+BucketName,string,"Name of the S3 bucket this row reports usage for."
+StorageClass,string,"The S3 storage class, e.g. Standard, Standard-IA, Glacier. Each class has a different per-GB price."
+StorageGB,float,"Average amount of data stored in the bucket during the billing period, in gigabytes."
+RequestsCount,integer,"Number of GET/PUT/LIST API requests made against the bucket during the billing period."
+DataTransferOutGB,float,"Amount of data transferred out of the bucket to the internet, in gigabytes. Billed separately from storage."
+TotalCost,float,"Sum of storage cost, request cost, and data transfer cost for this bucket, in USD."

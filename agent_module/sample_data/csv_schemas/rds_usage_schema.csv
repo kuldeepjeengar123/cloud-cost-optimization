@@ -1,0 +1,8 @@
+column_name,data_type,description
+DBInstanceIdentifier,string,"Unique name of the RDS database instance."
+Engine,string,"Database engine running on the instance, e.g. mysql, postgres, aurora."
+InstanceClass,string,"The RDS instance class/size, e.g. db.t3.medium. Determines the hourly compute rate."
+AllocatedStorageGB,float,"Amount of storage provisioned for the instance, in gigabytes. Billed regardless of actual usage."
+MultiAZ,boolean,"Whether the instance is deployed across multiple availability zones for high availability. Roughly doubles compute cost when true."
+HoursRunning,float,"Number of hours the instance was active during the billing period."
+TotalCost,float,"Combined compute and storage cost for this instance during the billing period, in USD."

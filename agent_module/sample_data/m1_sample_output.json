@@ -1,0 +1,13 @@
+{
+  "svc": "Amazon Elastic Compute Cloud - Compute",
+  "acct_id": "123456789012",
+  "rgn": null,
+  "cost": "1523.47",
+  "curr": "USD",
+  "period_start": "2026-06-01",
+  "period_end": "2026-06-30",
+  "resource": "i-0ec2used123",
+  "env_tag": null,
+  "usage_qty": "720",
+  "usage_unit": "Hrs"
+}

@@ -1,0 +1,9 @@
+column_name,data_type,description
+UsageAccountId,string,"The AWS account ID that incurred this line of usage."
+Service,string,"The AWS service this cost line item belongs to, e.g. Amazon EC2, Amazon S3, Amazon RDS."
+UsageType,string,"Identifies the specific billing dimension within a service, combining a region prefix with a usage category, e.g. USE1-BoxUsage:t3.medium for EC2 compute-hours, or USE1-TimedStorage-ByteHrs for S3 storage. Two rows with the same Service can have different UsageType values because they are billed under different rate categories (compute vs. storage vs. data transfer)."
+Region,string,"The AWS region the usage occurred in, e.g. us-east-1."
+UsageDate,date,"The calendar date (YYYY-MM-DD) this usage row applies to."
+UsageQuantity,float,"The amount of the resource consumed on this date, in the unit implied by UsageType (hours, GB, requests, etc.)."
+UnblendedCost,float,"The actual cost billed for this usage row, in the currency given by Currency, before any Reserved Instance or Savings Plan blending is applied across the account."
+Currency,string,"The ISO currency code for UnblendedCost, e.g. USD."

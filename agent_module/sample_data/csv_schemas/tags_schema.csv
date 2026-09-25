@@ -1,0 +1,5 @@
+column_name,data_type,description
+ResourceId,string,"Identifier of the AWS resource this tag applies to (matches InstanceId, BucketName, or DBInstanceIdentifier in other tables)."
+TagKey,string,"The name of the cost-allocation tag, e.g. Environment, Team, Project."
+TagValue,string,"The value assigned to the tag, e.g. production, data-platform."
+AppliedDate,date,"The date this tag was applied to the resource."

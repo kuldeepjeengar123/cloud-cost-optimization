@@ -1,0 +1,10 @@
+{
+  "service": "Amazon EC2",
+  "region": "us-east-1",
+  "billing_period": "2026-06-01 to 2026-06-30",
+  "resource_id": "i-0ec2used123",
+  "cost_usd": 1523.47,
+  "usage_quantity": 720,
+  "usage_unit": "Hours",
+  "currency": "USD"
+}
