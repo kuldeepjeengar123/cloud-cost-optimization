@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AWS Cost & Ops Insights</title>
+  <link rel="stylesheet" href="/shared.css" />
+  <link rel="stylesheet" href="/chatbot.css" />
+  <style>
+    .app{max-width:900px;margin:0 auto;padding:22px 22px 140px;min-height:100vh;display:flex;flex-direction:column}
+    .chat-header{display:flex;flex-direction:column;gap:3px;padding-bottom:16px;margin-bottom:18px;border-bottom:1px solid var(--border)}
+    .chat-header .brand{display:flex;align-items:center;gap:10px}
+    .chat-header .brand-title{font-weight:670;font-size:15.5px}
+    .chat-header .header-sub{font-size:12px;color:var(--text-muted)}
+
+    .chat{display:flex;flex-direction:column;gap:16px;flex:1}
+    .bubble{max-width:100%}
+    .bubble-label{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted);margin-bottom:6px}
+    .bubble.user{align-self:flex-end;max-width:70%}
+    .bubble.user .content{background:var(--accent-soft);border:1px solid rgba(255,159,67,.28);color:var(--accent-hover);
+      border-radius:var(--radius-sm);padding:10px 14px;font-size:13.5px;white-space:pre-wrap}
+    .bubble.assistant{width:100%}
+    .bubble.assistant .steps{display:grid;gap:6px}
+    .bubble.assistant .final{margin-top:14px}
+    .bubble.assistant .final[hidden]{display:none}
+
+    .composer{position:sticky;bottom:14px;margin-top:18px;background:var(--surface);border:1px solid var(--border);
+      border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow-pop);display:flex;flex-direction:column;gap:9px}
+    .composer textarea{width:100%;resize:vertical;min-height:44px;border:0;background:transparent;padding:4px 2px}
+    .composer textarea:focus{outline:none}
+    .composer-controls{display:flex;align-items:center;gap:10px;justify-content:space-between}
+    .source-pick{font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:7px}
+    #send{padding:9px 18px}
+
+    .followup-form{display:flex;gap:8px;align-items:flex-start}
+    .followup-form textarea{flex:1;resize:vertical;min-height:38px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;background:var(--surface)}
+    .followup-answer{margin-top:10px}
+    .chart-cards{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media (max-width:760px){.chart-cards{grid-template-columns:1fr}}
+    .fleet-summary{font-size:12.5px;color:var(--text-secondary);margin-bottom:9px}
+    tr.row-stopped td{opacity:.55}
+    .st-run{color:var(--good)}
+    .st-stop{color:var(--text-muted)}
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="chat-header">
+      <div class="brand">
+        <span class="spin-dot" aria-hidden="true"></span>
+        <span class="brand-title">AWS Cost &amp; Ops Insights</span>
+      </div>
+      <div class="header-sub">Data source → LLM pipeline → chat report</div>
+    </header>
+
+    <section id="chat" class="chat" aria-live="polite"></section>
+
+    <form id="composer" class="composer">
+      <textarea
+        id="query"
+        rows="2"
+        placeholder="Ask about your AWS costs… (Enter to send, Shift+Enter for newline)"
+      >Provide a comprehensive AWS cost analysis with key insights and recommendations.</textarea>
+      <div class="composer-controls">
+        <label class="source-pick">
+          Source:
+          <select id="source">
+            <option value="local_csv">Local CSV</option>
+            <option value="real_aws">Real AWS</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" id="send" type="submit">
+          <span class="send-label">Run pipeline</span>
+        </button>
+      </div>
+    </form>
+  </main>
+
+  <script src="/shared.js"></script>
+  <script src="/app.js"></script>
+  <script src="/chatbot.js"></script>
+</body>
+</html>

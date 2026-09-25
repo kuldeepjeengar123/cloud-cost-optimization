@@ -1,0 +1,418 @@
+Date,Service,Cost
+2026-02-11,AWS Glue,0
+2026-02-12,AWS Glue,0
+2026-02-12,AWS Lambda,0
+2026-02-12,Amazon Simple Storage Service,0.0000348
+2026-02-12,AmazonCloudWatch,0
+2026-02-13,AWS Glue,0
+2026-02-13,Amazon Simple Storage Service,0.000005
+2026-02-13,AmazonCloudWatch,0
+2026-02-14,AWS Glue,0
+2026-02-14,Amazon Simple Storage Service,0
+2026-02-14,AmazonCloudWatch,0
+2026-02-15,AWS Glue,0
+2026-02-15,Amazon Simple Storage Service,0.000005
+2026-02-15,AmazonCloudWatch,0
+2026-02-16,AWS Glue,0
+2026-02-16,Amazon Simple Queue Service,0
+2026-02-16,Amazon Simple Storage Service,0.0000112
+2026-02-16,AmazonCloudWatch,0
+2026-02-17,AWS Glue,0
+2026-02-17,AWS Lambda,0
+2026-02-17,Amazon Simple Notification Service,0
+2026-02-17,Amazon Simple Storage Service,0
+2026-02-17,AmazonCloudWatch,0
+2026-02-18,AWS Glue,0
+2026-02-18,AWS Lambda,0
+2026-02-18,Amazon Simple Storage Service,0.0000784315
+2026-02-18,AmazonCloudWatch,0
+2026-02-19,AWS Glue,0
+2026-02-19,AWS Lambda,0
+2026-02-19,AWS Step Functions,0
+2026-02-19,Amazon Simple Storage Service,0.0002182724
+2026-02-19,AmazonCloudWatch,0
+2026-02-20,AWS Glue,0
+2026-02-20,AWS Key Management Service,0
+2026-02-20,Amazon Simple Storage Service,0.0000000103
+2026-02-20,AmazonCloudWatch,0
+2026-02-21,AWS Glue,0
+2026-02-21,Amazon Simple Storage Service,0.0000050103
+2026-02-21,AmazonCloudWatch,0
+2026-02-22,AWS Glue,0
+2026-02-22,EC2 - Other,0.0079620378
+2026-02-22,Amazon Elastic Compute Cloud - Compute,0.0048029976
+2026-02-22,Amazon Simple Storage Service,0.0000008103
+2026-02-22,Amazon Virtual Private Cloud,0.00227361
+2026-02-22,AmazonCloudWatch,0
+2026-02-23,AWS Glue,0
+2026-02-23,AWS Key Management Service,0
+2026-02-23,AWS Lambda,0
+2026-02-23,AWS Secrets Manager,0.000005
+2026-02-23,AWS X-Ray,0
+2026-02-23,EC2 - Other,0.0238857144
+2026-02-23,Amazon Simple Notification Service,0
+2026-02-23,Amazon Simple Queue Service,0
+2026-02-23,Amazon Simple Storage Service,0.0000250241
+2026-02-23,AmazonCloudWatch,0
+2026-02-24,AWS Glue,0
+2026-02-24,AWS Key Management Service,0
+2026-02-24,AWS Secrets Manager,0.000005
+2026-02-24,EC2 - Other,0.0238857144
+2026-02-24,Amazon Simple Storage Service,0.0000100147
+2026-02-24,AmazonCloudWatch,0
+2026-02-25,AWS Glue,0
+2026-02-25,EC2 - Other,0.0238857144
+2026-02-25,Amazon Simple Storage Service,0.0000460103
+2026-02-25,AmazonCloudWatch,0
+2026-02-26,AWS Glue,0
+2026-02-26,EC2 - Other,0.0238857144
+2026-02-26,Amazon Simple Notification Service,0
+2026-02-26,Amazon Simple Storage Service,0.0000116228
+2026-02-26,AmazonCloudWatch,0
+2026-02-27,AWS Glue,0
+2026-02-27,AWS Secrets Manager,0.000005
+2026-02-27,EC2 - Other,0.0238857144
+2026-02-27,Amazon Simple Storage Service,0.0000050121
+2026-02-27,AmazonCloudWatch,0
+2026-02-28,AWS Glue,0
+2026-02-28,EC2 - Other,0.0238857144
+2026-02-28,Amazon Simple Notification Service,0
+2026-02-28,Amazon Simple Queue Service,0
+2026-02-28,Amazon Simple Storage Service,0.0000100132
+2026-02-28,AmazonCloudWatch,0
+2026-03-01,AWS Glue,0
+2026-03-01,AWS Key Management Service,0
+2026-03-01,AWS Secrets Manager,0.000005
+2026-03-01,EC2 - Other,0.0215741928
+2026-03-01,Amazon Simple Storage Service,0.0000100137
+2026-03-01,AmazonCloudWatch,0
+2026-03-01,Tax,886.89
+2026-03-02,AWS Glue,0
+2026-03-02,EC2 - Other,0.0215741928
+2026-03-02,Amazon Simple Storage Service,0.0000000093
+2026-03-02,AmazonCloudWatch,0
+2026-03-03,AWS Glue,0
+2026-03-03,EC2 - Other,0.0215741928
+2026-03-03,Amazon Simple Storage Service,0.0000050093
+2026-03-03,AmazonCloudWatch,0
+2026-03-04,AWS Glue,0
+2026-03-04,EC2 - Other,0.0215741928
+2026-03-04,Amazon Simple Storage Service,0.0000000093
+2026-03-04,AmazonCloudWatch,0
+2026-03-05,AWS Glue,0
+2026-03-05,EC2 - Other,0.0215741928
+2026-03-05,Amazon Simple Storage Service,0.0000000093
+2026-03-05,AmazonCloudWatch,0
+2026-03-06,AWS Glue,0
+2026-03-06,EC2 - Other,0.0215741928
+2026-03-06,Amazon Simple Storage Service,0.0000066218
+2026-03-06,AmazonCloudWatch,0
+2026-03-07,AWS Glue,0
+2026-03-07,EC2 - Other,0.0215741928
+2026-03-07,Amazon Simple Storage Service,0.0000050093
+2026-03-07,AmazonCloudWatch,0
+2026-03-08,AWS Glue,0
+2026-03-08,EC2 - Other,0.0215741928
+2026-03-08,Amazon Simple Storage Service,0.0000050093
+2026-03-08,AmazonCloudWatch,0
+2026-03-09,AWS Glue,0
+2026-03-09,Amazon Bedrock,0.0003108
+2026-03-09,EC2 - Other,0.0215741928
+2026-03-09,Amazon Simple Storage Service,0.0000148111
+2026-03-09,AmazonCloudWatch,0
+2026-03-10,AWS Glue,0
+2026-03-10,Amazon Bedrock,0.0006967
+2026-03-10,EC2 - Other,0.0215741928
+2026-03-10,Amazon Simple Storage Service,0.0000050093
+2026-03-10,AmazonCloudWatch,0
+2026-03-11,AWS Cost Explorer,0.52
+2026-03-11,AWS Glue,0
+2026-03-11,AWS Key Management Service,0
+2026-03-11,Amazon DataZone,0
+2026-03-11,EC2 - Other,0.1464172407
+2026-03-11,Amazon Elastic Compute Cloud - Compute,0.3892665608
+2026-03-11,Amazon SageMaker,0.212712137
+2026-03-11,Amazon Simple Storage Service,0.003105473
+2026-03-11,Amazon Virtual Private Cloud,0.134169445
+2026-03-11,AmazonCloudWatch,0
+2026-03-12,AWS Cost Explorer,4429.88
+2026-03-12,AWS Glue,0
+2026-03-12,AWS Lambda,0.0521617396
+2026-03-12,Amazon DataZone,0
+2026-03-12,EC2 - Other,0.0870236935
+2026-03-12,Amazon Elastic Compute Cloud - Compute,0.4086389992
+2026-03-12,Amazon SageMaker,0.086976004
+2026-03-12,Amazon Simple Queue Service,0
+2026-03-12,Amazon Simple Storage Service,2.2132882289
+2026-03-12,Amazon Virtual Private Cloud,0.15
+2026-03-12,AmazonCloudWatch,0
+2026-03-13,AWS Cost Explorer,6.692265
+2026-03-13,Amazon Elastic Compute Cloud - Compute,28.283266
+2026-03-13,EC2 - Other,1.565931
+2026-03-13,Tax,5.481618
+2026-03-13,Amazon Simple Storage Service,0.000149
+2026-03-13,AWS Lambda,0.000692
+2026-03-13,Amazon SageMaker,0.001597
+2026-03-13,Amazon Virtual Private Cloud,0.000164
+2026-03-13,Amazon Bedrock,0.000058
+2026-03-14,AWS Cost Explorer,8.80012
+2026-03-14,Amazon Elastic Compute Cloud - Compute,29.235132
+2026-03-14,EC2 - Other,1.760475
+2026-03-14,Tax,5.969547
+2026-03-14,Amazon Simple Storage Service,0.000129
+2026-03-14,AWS Lambda,0.000282
+2026-03-14,Amazon SageMaker,0.000505
+2026-03-14,Amazon Virtual Private Cloud,0.000247
+2026-03-14,Amazon Bedrock,0.000088
+2026-03-15,AWS Cost Explorer,5.40349
+2026-03-15,Amazon Elastic Compute Cloud - Compute,29.46421
+2026-03-15,EC2 - Other,1.609851
+2026-03-15,Tax,5.47255
+2026-03-15,Amazon Simple Storage Service,0.000342
+2026-03-15,AWS Lambda,0.000156
+2026-03-15,Amazon SageMaker,0.005532
+2026-03-15,Amazon Virtual Private Cloud,0.000037
+2026-03-15,Amazon Bedrock,0.00005
+2026-03-16,AWS Cost Explorer,8.633691
+2026-03-16,Amazon Elastic Compute Cloud - Compute,29.511155
+2026-03-16,EC2 - Other,1.580718
+2026-03-16,Tax,5.959728
+2026-03-16,Amazon Simple Storage Service,0.000453
+2026-03-16,AWS Lambda,0.000159
+2026-03-16,Amazon SageMaker,0.005091
+2026-03-16,Amazon Virtual Private Cloud,0.00025
+2026-03-16,Amazon Bedrock,0.000005
+2026-03-17,AWS Cost Explorer,8.943694
+2026-03-17,Amazon Elastic Compute Cloud - Compute,28.539242
+2026-03-17,EC2 - Other,1.327077
+2026-03-17,Tax,5.822179
+2026-03-17,Amazon Simple Storage Service,0.000444
+2026-03-17,AWS Lambda,0.000239
+2026-03-17,Amazon SageMaker,0.003364
+2026-03-17,Amazon Virtual Private Cloud,0.000414
+2026-03-17,Amazon Bedrock,0.000053
+2026-03-18,AWS Cost Explorer,7.128262
+2026-03-18,Amazon Elastic Compute Cloud - Compute,29.430978
+2026-03-18,EC2 - Other,2.031119
+2026-03-18,Tax,5.790134
+2026-03-18,Amazon Simple Storage Service,0.000016
+2026-03-18,AWS Lambda,0.00038
+2026-03-18,Amazon SageMaker,0.009671
+2026-03-18,Amazon Virtual Private Cloud,0.000391
+2026-03-18,Amazon Bedrock,0.000078
+2026-03-19,AWS Cost Explorer,3.189423
+2026-03-19,Amazon Elastic Compute Cloud - Compute,28.739121
+2026-03-19,EC2 - Other,1.932105
+2026-03-19,Tax,5.07925
+2026-03-19,Amazon Simple Storage Service,0.000569
+2026-03-19,AWS Lambda,0.000088
+2026-03-19,Amazon SageMaker,0.000189
+2026-03-19,Amazon Virtual Private Cloud,0.000157
+2026-03-19,Amazon Bedrock,0.000015
+2026-03-20,AWS Cost Explorer,4.950297
+2026-03-20,Amazon Elastic Compute Cloud - Compute,29.04352
+2026-03-20,EC2 - Other,1.402618
+2026-03-20,Tax,5.310085
+2026-03-20,Amazon Simple Storage Service,0.000397
+2026-03-20,AWS Lambda,0.00042
+2026-03-20,Amazon SageMaker,0.003138
+2026-03-20,Amazon Virtual Private Cloud,0.000087
+2026-03-20,Amazon Bedrock,0.000091
+2026-03-21,AWS Cost Explorer,6.34852
+2026-03-21,Amazon Elastic Compute Cloud - Compute,28.706764
+2026-03-21,EC2 - Other,1.431341
+2026-03-21,Tax,5.473602
+2026-03-21,Amazon Simple Storage Service,0.000135
+2026-03-21,AWS Lambda,0.000778
+2026-03-21,Amazon SageMaker,0.002976
+2026-03-21,Amazon Virtual Private Cloud,0.000145
+2026-03-21,Amazon Bedrock,0.000021
+2026-03-22,AWS Cost Explorer,8.880963
+2026-03-22,Amazon Elastic Compute Cloud - Compute,29.145619
+2026-03-22,EC2 - Other,1.608482
+2026-03-22,Tax,5.946681
+2026-03-22,Amazon Simple Storage Service,0.000491
+2026-03-22,AWS Lambda,0.000764
+2026-03-22,Amazon SageMaker,0.008046
+2026-03-22,Amazon Virtual Private Cloud,0.000145
+2026-03-22,Amazon Bedrock,0.000029
+2026-03-23,AWS Cost Explorer,3.823638
+2026-03-23,Amazon Elastic Compute Cloud - Compute,29.109601
+2026-03-23,EC2 - Other,1.974995
+2026-03-23,Tax,5.236783
+2026-03-23,Amazon Simple Storage Service,0.000369
+2026-03-23,AWS Lambda,0.000469
+2026-03-23,Amazon SageMaker,0.002425
+2026-03-23,Amazon Virtual Private Cloud,0.000335
+2026-03-23,Amazon Bedrock,0.000053
+2026-03-24,AWS Cost Explorer,5.441445
+2026-03-24,Amazon Elastic Compute Cloud - Compute,28.555184
+2026-03-24,EC2 - Other,2.203432
+2026-03-24,Tax,5.430944
+2026-03-24,Amazon Simple Storage Service,0.000561
+2026-03-24,AWS Lambda,0.000703
+2026-03-24,Amazon SageMaker,0.004774
+2026-03-24,Amazon Virtual Private Cloud,0.0001
+2026-03-24,Amazon Bedrock,0.000096
+2026-03-25,AWS Cost Explorer,4.050389
+2026-03-25,Amazon Elastic Compute Cloud - Compute,29.380419
+2026-03-25,EC2 - Other,2.24846
+2026-03-25,Tax,5.353451
+2026-03-25,Amazon Simple Storage Service,0.000529
+2026-03-25,AWS Lambda,0.000141
+2026-03-25,Amazon SageMaker,0.009196
+2026-03-25,Amazon Virtual Private Cloud,0.000499
+2026-03-25,Amazon Bedrock,0.00004
+2026-03-26,AWS Cost Explorer,4.70737
+2026-03-26,Amazon Elastic Compute Cloud - Compute,29.348673
+2026-03-26,EC2 - Other,2.32793
+2026-03-26,Tax,5.458574
+2026-03-26,Amazon Simple Storage Service,0.000593
+2026-03-26,AWS Lambda,0.000435
+2026-03-26,Amazon SageMaker,0.004939
+2026-03-26,Amazon Virtual Private Cloud,0.000469
+2026-03-26,Amazon Bedrock,0.000085
+2026-03-27,AWS Cost Explorer,6.406687
+2026-03-27,Amazon Elastic Compute Cloud - Compute,28.310252
+2026-03-27,EC2 - Other,2.027883
+2026-03-27,Tax,5.513176
+2026-03-27,Amazon Simple Storage Service,0.000454
+2026-03-27,AWS Lambda,0.00014
+2026-03-27,Amazon SageMaker,0.008561
+2026-03-27,Amazon Virtual Private Cloud,0.000449
+2026-03-27,Amazon Bedrock,0.000083
+2026-03-28,AWS Cost Explorer,7.52254
+2026-03-28,Amazon Elastic Compute Cloud - Compute,28.099357
+2026-03-28,EC2 - Other,1.388694
+2026-03-28,Tax,5.552806
+2026-03-28,Amazon Simple Storage Service,0.000572
+2026-03-28,AWS Lambda,0.000242
+2026-03-28,Amazon SageMaker,0.007229
+2026-03-28,Amazon Virtual Private Cloud,0.000006
+2026-03-28,Amazon Bedrock,0.000065
+2026-03-29,AWS Cost Explorer,3.704494
+2026-03-29,Amazon Elastic Compute Cloud - Compute,28.556406
+2026-03-29,EC2 - Other,1.497473
+2026-03-29,Tax,5.064814
+2026-03-29,Amazon Simple Storage Service,0.00055
+2026-03-29,AWS Lambda,0.000236
+2026-03-29,Amazon SageMaker,0.006146
+2026-03-29,Amazon Virtual Private Cloud,0.00011
+2026-03-29,Amazon Bedrock,0.000013
+2026-03-30,AWS Cost Explorer,4.484793
+2026-03-30,Amazon Elastic Compute Cloud - Compute,28.98065
+2026-03-30,EC2 - Other,1.412414
+2026-03-30,Tax,5.232018
+2026-03-30,Amazon Simple Storage Service,0.000453
+2026-03-30,AWS Lambda,0.000699
+2026-03-30,Amazon SageMaker,0.000819
+2026-03-30,Amazon Virtual Private Cloud,0.000223
+2026-03-30,Amazon Bedrock,0.00007
+2026-03-31,AWS Cost Explorer,3.69744
+2026-03-31,Amazon Elastic Compute Cloud - Compute,28.113867
+2026-03-31,EC2 - Other,1.709707
+2026-03-31,Tax,5.028427
+2026-03-31,Amazon Simple Storage Service,0.000123
+2026-03-31,AWS Lambda,0.000467
+2026-03-31,Amazon SageMaker,0.000909
+2026-03-31,Amazon Virtual Private Cloud,0.000255
+2026-03-31,Amazon Bedrock,0.000081
+2026-04-01,AWS Cost Explorer,7.474827
+2026-04-01,Amazon Elastic Compute Cloud - Compute,28.554771
+2026-04-01,EC2 - Other,2.074736
+2026-04-01,Tax,5.716244
+2026-04-01,Amazon Simple Storage Service,0.000347
+2026-04-01,AWS Lambda,0.000036
+2026-04-01,Amazon SageMaker,0.003445
+2026-04-01,Amazon Virtual Private Cloud,0.000032
+2026-04-01,Amazon Bedrock,0.000099
+2026-04-02,AWS Cost Explorer,5.522172
+2026-04-02,Amazon Elastic Compute Cloud - Compute,29.427984
+2026-04-02,EC2 - Other,1.937398
+2026-04-02,Tax,5.534646
+2026-04-02,Amazon Simple Storage Service,0.000596
+2026-04-02,AWS Lambda,0.000306
+2026-04-02,Amazon SageMaker,0.008696
+2026-04-02,Amazon Virtual Private Cloud,0.000453
+2026-04-02,Amazon Bedrock,0.000038
+2026-04-03,AWS Cost Explorer,4.336141
+2026-04-03,Amazon Elastic Compute Cloud - Compute,29.13735
+2026-04-03,EC2 - Other,2.013808
+2026-04-03,Tax,5.323604
+2026-04-03,Amazon Simple Storage Service,0.000002
+2026-04-03,AWS Lambda,0.000018
+2026-04-03,Amazon SageMaker,0.002984
+2026-04-03,Amazon Virtual Private Cloud,0.000337
+2026-04-03,Amazon Bedrock,0.000054
+2026-04-04,AWS Cost Explorer,5.515444
+2026-04-04,Amazon Elastic Compute Cloud - Compute,28.53173
+2026-04-04,EC2 - Other,2.065102
+2026-04-04,Tax,5.417057
+2026-04-04,Amazon Simple Storage Service,0.00046
+2026-04-04,AWS Lambda,0.000707
+2026-04-04,Amazon SageMaker,0.000156
+2026-04-04,Amazon Virtual Private Cloud,0.000103
+2026-04-04,Amazon Bedrock,0.00001
+2026-04-05,AWS Cost Explorer,3.338664
+2026-04-05,Amazon Elastic Compute Cloud - Compute,28.237289
+2026-04-05,EC2 - Other,2.105068
+2026-04-05,Tax,5.053516
+2026-04-05,Amazon Simple Storage Service,0.000302
+2026-04-05,AWS Lambda,0.000231
+2026-04-05,Amazon SageMaker,0.008158
+2026-04-05,Amazon Virtual Private Cloud,0.000366
+2026-04-05,Amazon Bedrock,0.000032
+2026-04-06,AWS Cost Explorer,8.691122
+2026-04-06,Amazon Elastic Compute Cloud - Compute,28.509955
+2026-04-06,EC2 - Other,1.209914
+2026-04-06,Tax,5.762816
+2026-04-06,Amazon Simple Storage Service,0.000528
+2026-04-06,AWS Lambda,0.000729
+2026-04-06,Amazon SageMaker,0.00626
+2026-04-06,Amazon Virtual Private Cloud,0.000214
+2026-04-06,Amazon Bedrock,0.00005
+2026-04-07,AWS Cost Explorer,5.841113
+2026-04-07,Amazon Elastic Compute Cloud - Compute,29.526594
+2026-04-07,EC2 - Other,2.072077
+2026-04-07,Tax,5.617216
+2026-04-07,Amazon Simple Storage Service,0.00051
+2026-04-07,AWS Lambda,0.000241
+2026-04-07,Amazon SageMaker,0.007076
+2026-04-07,Amazon Virtual Private Cloud,0.000403
+2026-04-07,Amazon Bedrock,0.000091
+2026-04-08,AWS Cost Explorer,3.554784
+2026-04-08,Amazon Elastic Compute Cloud - Compute,29.403248
+2026-04-08,EC2 - Other,2.172469
+2026-04-08,Tax,5.270126
+2026-04-08,Amazon Simple Storage Service,0.000435
+2026-04-08,AWS Lambda,0.000152
+2026-04-08,Amazon SageMaker,0.002685
+2026-04-08,Amazon Virtual Private Cloud,0.000337
+2026-04-08,Amazon Bedrock,0.00006
+2026-04-09,AWS Cost Explorer,3.092002
+2026-04-09,Amazon Elastic Compute Cloud - Compute,29.087345
+2026-04-09,EC2 - Other,2.27698
+2026-04-09,Tax,5.168907
+2026-04-09,Amazon Simple Storage Service,0.000562
+2026-04-09,AWS Lambda,0.00077
+2026-04-09,Amazon SageMaker,0.001173
+2026-04-09,Amazon Virtual Private Cloud,0.0005
+2026-04-09,Amazon Bedrock,0.000048
+2026-04-10,AWS Cost Explorer,4.56937
+2026-04-10,Amazon Elastic Compute Cloud - Compute,28.818839
+2026-04-10,EC2 - Other,1.566891
+2026-04-10,Tax,5.243599
+2026-04-10,Amazon Simple Storage Service,0.000308
+2026-04-10,AWS Lambda,0.000398
+2026-04-10,Amazon SageMaker,0.000986
+2026-04-10,Amazon Virtual Private Cloud,0.000491
+2026-04-10,Amazon Bedrock,0.000047
+2026-04-11,AWS Cost Explorer,6.474858
+2026-04-11,Amazon Elastic Compute Cloud - Compute,28.966838
+2026-04-11,EC2 - Other,2.241753
+2026-04-11,Tax,5.653109
+2026-04-11,Amazon Simple Storage Service,0.000251
+2026-04-11,AWS Lambda,0.000122
+2026-04-11,Amazon SageMaker,0.003299
+2026-04-11,Amazon Virtual Private Cloud,0.00019
+2026-04-11,Amazon Bedrock,0.000083

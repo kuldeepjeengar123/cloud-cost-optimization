@@ -1,0 +1,2225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FinOps Two-Stage Approval · Employee &amp; RE Team Prototype</title>
+<link rel="stylesheet" href="/shared.css" />
+<link rel="stylesheet" href="/chatbot.css" />
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ================= Header ================= -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>
+        </svg>
+      </div>
+      <div class="brand-txt">
+        <div class="t">AWS Cost &amp; Ops Insights — Change Approval</div>
+        <div class="s">Two-stage human-in-the-loop: engineer proposes, RE team decides, AWS applies</div>
+      </div>
+    </div>
+
+    <div class="topright">
+      <div class="target-picker">
+        <span class="fl">Target</span>
+        <select id="targetSelect" aria-label="Data / AWS target">
+          <option value="local_csv">Local files (CSV)</option>
+          <option value="ec2_rightsizing">EC2 Rightsizing (t3.nano → t3.micro)</option>
+          <option value="real_aws">Real AWS</option>
+        </select>
+      </div>
+      <div class="roles" role="tablist" aria-label="Dashboard role">
+        <button class="role-btn" id="roleEmp" role="tab" aria-selected="true" aria-controls="viewEmp">
+          <span class="rb-t">Employee</span>
+          <span class="rb-s">Engineering · raises requests</span>
+        </button>
+        <button class="role-btn" id="roleRe" role="tab" aria-selected="false" aria-controls="viewRe">
+          <span class="rb-t">RE Team</span>
+          <span class="rb-s">Approves &amp; applies to AWS</span>
+          <span class="badge-count" id="queueBadge" hidden>0</span>
+        </button>
+      </div>
+      <div class="who" id="whoChip">
+        <div class="avatar" id="whoAvatar">KJ</div>
+        <div class="who-text">
+          <div class="n" id="whoName">Kuldeep Jeengar</div>
+          <div class="r" id="whoRole">Engineer · Project Atlas</div>
+        </div>
+      </div>
+      <button class="btn-ghost" id="resetBtn" type="button">Reset prototype</button>
+      <!-- TEST-ONLY control — remove before shipping. Wipes every action,
+           decision and pipeline-run result so the dashboard goes back to a
+           clean slate (no recommendations, no charts). -->
+      <button class="btn-ghost" id="resetTestDataBtn" type="button"
+              style="border-color:rgba(255,204,77,.5);color:#ffd876" title="Test-only: clear every recommendation, decision and chart">
+        Reset test data
+      </button>
+    </div>
+  </header>
+
+  <!-- ============ Live EC2 instances — type and state ============
+       Sits directly under the Target dropdown because it belongs to the "EC2
+       Rightsizing" target: which instance types exist right now, and how many
+       of each are running or stopped. Shown only while that target is
+       selected (see drawInstanceStateTable) — starts hidden so picking any
+       other target never flashes it. Read live from describe_instances, so it
+       is populated before any pipeline run, in both roles. -->
+  <div class="card" id="instancePanel" style="margin-bottom:14px" hidden>
+    <div class="chart-head">
+      <div>
+        <h3>EC2 instances — type and state</h3>
+        <p class="csub" id="instancePanelSub">Waiting on the fleet read.</p>
+      </div>
+      <span class="chip mono" id="instancePanelTarget">local_csv</span>
+    </div>
+    <div class="table-view" id="tblInstanceStates"></div>
+  </div>
+
+  <!-- ================= Provenance ================= -->
+  <div class="provenance">
+    <span id="provStatus"><b>Connecting…</b></span>
+    <span class="sep"></span>
+    <span id="provCharts"><b>Charts above</b> are empty until you run the pipeline with "Run a new analysis" above — nothing shown is fabricated or reference data.</span>
+    <span class="sep"></span>
+    <span><b>Recommendations, queue and log below</b> are read live from <span class="mono">outputs/pending_actions.json</span></span>
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- ==================== EMPLOYEE DASHBOARD ====================== -->
+  <!-- ============================================================== -->
+  <section class="view" id="viewEmp" role="tabpanel" aria-labelledby="roleEmp">
+
+    <!-- Folded in from approval_dashboard.html: a consolidated stat strip,
+         driven by the same recs/log this page already loads (no new API). -->
+    <div id="empRealAwsWarn" hidden></div>
+    <div class="stat-strip" id="statStrip"></div>
+
+    <!-- ================= Run a new analysis (employee only) ================= -->
+    <div class="card" id="runPanel" style="margin-bottom:14px">
+      <div class="chart-head">
+        <div>
+          <h3>Run a new analysis</h3>
+          <p class="csub">Pulls fresh data through the LLM pipeline step by step, then refreshes the recommendations, RE queue and fleet below with whatever it produces.</p>
+        </div>
+        <button class="tv-toggle" id="runToggle" aria-pressed="false" type="button">Run pipeline</button>
+      </div>
+      <div id="runBody" hidden>
+        <div class="filters" style="margin-top:12px">
+          <span class="fl">Target</span>
+          <span class="chip mono" id="runTargetLabel">local_csv</span>
+          <span style="font-size:11.5px;color:var(--text-muted)">Set from the Target dropdown in the header above.</span>
+          <span class="fl">Date range</span>
+          <select id="runDateRange" aria-label="Date range">
+            <option value="" selected>All available data</option>
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="weekly">Weekly (last 7 days)</option>
+            <option value="monthly">Monthly (last 30 days)</option>
+            <option value="yearly">Yearly (last 365 days)</option>
+          </select>
+          <span class="spacer"></span>
+          <button class="btn btn-primary" id="runStart" type="button">Start run</button>
+        </div>
+        <div id="runRealAwsWarn" hidden></div>
+        <div id="runSteps" hidden></div>
+        <div id="runResult"></div>
+        <div id="runReport" hidden></div>
+      </div>
+    </div>
+
+    <p class="emp-status" id="empStatus"></p>
+
+    <!-- One filter row, above everything it scopes -->
+    <div class="filters">
+      <span class="fl">Filters</span>
+      <select id="fEnv" aria-label="Environment">
+        <option value="all">All environments</option>
+        <option value="prod">prod</option>
+        <option value="dev">dev</option>
+      </select>
+      <select id="fRegion" aria-label="Region">
+        <option value="all">All regions</option>
+        <option value="eu-north-1">eu-north-1</option>
+        <option value="eu-west-2">eu-west-2</option>
+        <option value="us-east-1">us-east-1</option>
+      </select>
+      <select id="fProject" aria-label="Project tag">
+        <option value="all">All projects</option>
+        <option value="Atlas">Atlas</option>
+        <option value="Helios">Helios</option>
+        <option value="Nimbus">Nimbus</option>
+      </select>
+      <span class="spacer"></span>
+      <span class="scope-note">Scopes the fleet chart, the fleet table and the fleet-scan recommendations. Billing charts show the full account.</span>
+    </div>
+
+    <div class="charts">
+      <div class="chart-card">
+        <div class="chart-head">
+          <div>
+            <h3 id="hdrService">Where the money goes — cost by service</h3>
+            <p class="csub" id="captionService">Waiting on a pipeline run.</p>
+          </div>
+          <button class="tv-toggle" data-table="tblService" aria-pressed="false" type="button">Table</button>
+        </div>
+        <div class="plot" id="chartService"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
+        <div class="table-view" id="tblService" hidden></div>
+        <p class="chart-foot" id="footService">Source: <span class="mono">correlations.service_daily_cost__by_service</span></p>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <div>
+            <h3 id="hdrDaily">Daily spend</h3>
+            <p class="csub" id="captionDaily">Waiting on a pipeline run.</p>
+          </div>
+          <button class="tv-toggle" data-table="tblDaily" aria-pressed="false" type="button">Table</button>
+        </div>
+        <div class="plot" id="chartDaily"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
+        <div class="table-view" id="tblDaily" hidden></div>
+        <p class="chart-foot" id="footDaily">Source: <span class="mono">correlations.service_daily_cost__by_date</span></p>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <div>
+            <h3>EC2 fleet — utilization against monthly cost</h3>
+            <p class="csub">Anything expensive and to the left is a candidate to switch off or shrink. Updates live as changes are applied.</p>
+            <p class="csub" id="fleetSummaryCaption">Waiting on the fleet read.</p>
+          </div>
+          <button class="tv-toggle" data-table="tblFleet" aria-pressed="false" type="button">Table</button>
+        </div>
+        <div class="plot" id="chartFleet"></div>
+        <div class="legend" id="legendFleet"></div>
+        <div class="table-view" id="tblFleet" hidden></div>
+        <p class="chart-foot">Source: <span class="mono">GET /aws/ec2/instances</span> + <span class="mono">GET /aws/cw/metric-statistics</span> (CPUUtilization, 24h avg)</p>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <div>
+            <h3>Cost by region</h3>
+            <p class="csub" id="captionRegion">Waiting on a pipeline run.</p>
+          </div>
+          <button class="tv-toggle" data-table="tblRegion" aria-pressed="false" type="button">Table</button>
+        </div>
+        <div class="plot" id="chartRegion"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
+        <div class="table-view" id="tblRegion" hidden></div>
+        <p class="chart-foot" id="footRegion">Source: <span class="mono">correlations.region_cost__by_region</span></p>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <div>
+            <h3>Cost forecast</h3>
+            <p class="csub" id="captionForecast">Waiting on a pipeline run.</p>
+          </div>
+          <button class="tv-toggle" data-table="tblForecast" aria-pressed="false" type="button">Table</button>
+        </div>
+        <div class="plot" id="chartForecast"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
+        <div class="table-view" id="tblForecast" hidden></div>
+        <p class="chart-foot" id="footForecast">Source: <span class="mono">analysis.forecast</span></p>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <div>
+            <h3>Tag governance</h3>
+            <p class="csub" id="captionTagGov">Waiting on a pipeline run.</p>
+          </div>
+          <button class="tv-toggle" data-table="tblTagGov" aria-pressed="false" type="button">Table</button>
+        </div>
+        <div class="plot" id="chartTagGov"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
+        <div class="table-view" id="tblTagGov" hidden></div>
+        <p class="chart-foot" id="footTagGov">Source: <span class="mono">analysis.tag_findings</span></p>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <div>
+            <h3>Anomaly root cause</h3>
+            <p class="csub" id="captionRootCause">Waiting on a pipeline run.</p>
+          </div>
+          <button class="tv-toggle" data-table="tblRootCause" aria-pressed="false" type="button">Table</button>
+        </div>
+        <div class="plot" id="chartRootCause"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
+        <div class="table-view" id="tblRootCause" hidden></div>
+        <p class="chart-foot" id="footRootCause">Source: <span class="mono">analysis.anomalies[].drivers</span></p>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <div>
+        <h2>Recommendations</h2>
+        <p>Accepting raises a change request to the RE team — nothing reaches AWS until they approve. Rejecting closes it on your side and it is never sent.</p>
+      </div>
+    </div>
+    <div class="rec-tabs" id="recTabs" role="tablist" aria-label="Recommendation status"></div>
+    <div class="rec-list" id="recList"></div>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- ===================== RE TEAM DASHBOARD ====================== -->
+  <!-- ============================================================== -->
+  <section class="view" id="viewRe" role="tabpanel" aria-labelledby="roleRe" hidden>
+
+    <div id="reRealAwsWarn" hidden></div>
+
+    <div class="hero-row">
+      <div class="hero">
+        <div class="lbl">Savings at stake in the queue</div>
+        <div class="val" id="reHero">$0</div>
+        <div class="sub" id="reHeroSub">Monthly, across requests waiting on a decision</div>
+        <div class="meter-track" aria-hidden="true"><div class="meter-fill" id="reMeter" style="width:0%"></div></div>
+        <div class="sub" style="margin-top:7px" id="reMeterLbl">—</div>
+      </div>
+      <div class="tiles">
+        <div class="tile">
+          <span class="rail" style="background:var(--warning)"></span>
+          <div class="tv" id="rqCount">0</div>
+          <div class="tn">Awaiting decision</div>
+          <div class="td" id="rqCountSub">—</div>
+        </div>
+        <div class="tile">
+          <span class="rail" style="background:var(--critical)"></span>
+          <div class="tv" id="rqProd">0</div>
+          <div class="tn">Touching production</div>
+          <div class="td">Higher blast radius — review carefully</div>
+        </div>
+        <div class="tile">
+          <span class="rail" style="background:var(--good)"></span>
+          <div class="tv" id="rqApproved">0</div>
+          <div class="tn">Approved &amp; applied</div>
+          <div class="td" id="rqApprovedSub">—</div>
+        </div>
+        <div class="tile">
+          <span class="rail" style="background:var(--series-1)"></span>
+          <div class="tv" id="rqFleet">$0</div>
+          <div class="tn">Fleet cost after approvals</div>
+          <div class="td" id="rqFleetSub">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="charts" style="grid-template-columns:1fr">
+      <div class="chart-card">
+        <div class="chart-head">
+          <div>
+            <h3>Fleet under review — what the queue would change</h3>
+            <p class="csub">Instances targeted by a pending request are ringed. Approving moves the mark; declining leaves it where it is.</p>
+            <p class="csub" id="fleetSummaryCaptionRe">Waiting on the fleet read.</p>
+          </div>
+          <button class="tv-toggle" data-table="tblReFleet" aria-pressed="false" type="button">Table</button>
+        </div>
+        <div class="plot" id="chartReFleet"></div>
+        <div class="legend" id="legendReFleet"></div>
+        <div class="table-view" id="tblReFleet" hidden></div>
+        <p class="chart-foot">Approving runs the calls listed on each request against your configured AWS account via <span class="mono">boto3</span>.</p>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <div>
+        <h2>Approval queue</h2>
+        <p>Staging a decision never touches AWS. Approve or decline every request below, then commit the whole batch.</p>
+      </div>
+    </div>
+    <div class="rec-list" id="queueList"></div>
+
+    <div class="section-head">
+      <div>
+        <h2>Staged — awaiting commit</h2>
+        <p>These decisions are recorded but not yet applied. Nothing reaches AWS or a CSV until you commit the batch below.</p>
+      </div>
+    </div>
+    <div id="commitPanel" class="commit-panel"></div>
+    <div id="commitResult"></div>
+    <div class="rec-list" id="stagedList"></div>
+
+    <div class="section-head">
+      <div>
+        <h2>Decision activity</h2>
+        <p>Every decision is written back to the employee dashboard, including the reason for a decline.</p>
+      </div>
+    </div>
+    <!-- Folded in from approval_dashboard.html: an activity-feed styled view
+         of the same decision log (real data via GET /api/decisions), plus its
+         "Approval flow" step rail alongside it. -->
+    <div class="grid" style="grid-template-columns:2fr 1fr;align-items:start">
+      <div class="card log-card">
+        <div class="lh"><h3>Activity log</h3><p>Raises, withdrawals, approvals and declines, newest first.</p></div>
+        <div class="feed" id="logBody"></div>
+      </div>
+      <div class="card">
+        <div class="lh" style="padding:0 0 12px;border:0"><h3 style="font-size:13.5px;font-weight:630;margin:0">Approval flow</h3>
+          <p style="margin:3px 0 0;font-size:11.5px;color:var(--text-muted)">Highlights once any recommendation reaches that stage.</p></div>
+        <div class="flow-rail" id="flowRail"></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script src="/shared.js"></script>
+<script src="/chatbot.js"></script>
+<script>
+"use strict";
+const {esc, money, money2, compactMoney, toast, hoverable, ICON, IMPACT_ICON, BAND,
+       renderTable, renderLegend, hbarChart, columnChart, lineChart, fleetScatter, fleetLegendItems, fmtTime,
+       fmtStepElapsed} = Shared;
+
+/* =========================================================================
+   1. DATA
+   -------------------------------------------------------------------------
+   The service/daily/region cost charts carry NO seed data — they render
+   whatever the most recent pipeline run in this session produced (see
+   getPipelineChartData(), fed by the "Run a new analysis" panel) and show an
+   explicit "no data yet" state until then. Only the fleet and recommendation
+   seeds below remain, and only as a last-resort offline demo when the
+   backend truly cannot be reached (see loadState()'s catch blocks) — never
+   as a placeholder before a real fetch has had a chance to complete.
+   ========================================================================= */
+
+const HOURS_PER_MONTH = 730;
+
+const PRICE = {
+  "t3.nano":0.0052,"t3.micro":0.0104,"t3.small":0.0208,"t3.medium":0.0416,
+  "t3.large":0.0832,"t3.xlarge":0.1664,"t3.2xlarge":0.3328,
+  "m5.large":0.096,"m5.xlarge":0.192,"m5.2xlarge":0.384,
+  "c5.large":0.085,"c5.xlarge":0.17,"c5.2xlarge":0.34,
+  "r5.large":0.126,"r5.xlarge":0.252,"r5.2xlarge":0.504
+};
+const LADDER = {
+  t3:["t3.nano","t3.micro","t3.small","t3.medium","t3.large","t3.xlarge","t3.2xlarge"],
+  m5:["m5.large","m5.xlarge","m5.2xlarge"],
+  c5:["c5.large","c5.xlarge","c5.2xlarge"],
+  r5:["r5.large","r5.xlarge","r5.2xlarge"]
+};
+function smallerType(t){
+  const l = LADDER[t.split(".")[0]]; if(!l) return null;
+  const i = l.indexOf(t); return i > 0 ? l[i-1] : null;
+}
+function monthlyOf(type){ return (PRICE[type]||0) * HOURS_PER_MONTH; }
+
+const FLEET_SEED = [
+  {id:"i-0a1f2e3d",name:"web-prod-1", type:"m5.xlarge", region:"eu-north-1",cpu:55,env:"prod",project:"Atlas", state:"running"},
+  {id:"i-0b2e3f4c",name:"web-prod-2", type:"m5.xlarge", region:"eu-north-1",cpu:48,env:"prod",project:"Atlas", state:"running"},
+  {id:"i-0c3d4e5b",name:"api-prod-1", type:"c5.xlarge", region:"us-east-1", cpu:62,env:"prod",project:"Atlas", state:"running"},
+  {id:"i-0d4c5b6a",name:"worker-1",   type:"r5.large",  region:"us-east-1", cpu:40,env:"prod",project:"Helios",state:"running"},
+  {id:"i-0e5b6a7f",name:"batch-1",    type:"t3.large",  region:"eu-west-2", cpu:22,env:"dev", project:"Helios",state:"running"},
+  {id:"i-0f6a7b8e",name:"dev-sandbox",type:"t3.medium", region:"eu-west-2", cpu:8, env:"dev", project:"Nimbus",state:"running"},
+  {id:"i-1a7b8c9d",name:"legacy-idle",type:"t3.xlarge", region:"us-east-1", cpu:2, env:"dev", project:"Atlas", state:"running"},
+  {id:"i-2b8c9d0e",name:"analytics-1",type:"r5.xlarge", region:"eu-north-1",cpu:35,env:"prod",project:"Helios",state:"running"}
+];
+
+const REC_SEED = [
+  {
+    id:"act_f1a7b8c9d001", src:"fleet-scan", impact:"high", op:"terminate",
+    title:"Decommission legacy-idle (t3.xlarge) — 2% CPU for 41 consecutive days, no attached traffic",
+    rationale:"CloudWatch shows a 24h average of 2% CPU and no network egress since the Atlas migration. The instance is dev-tagged and outside every deployment target. This is the single largest unnecessary line item in the fleet.",
+    table:"ec2_instance_cost", match_column:"instance_type", match_value:"t3.xlarge",
+    targets:["i-1a7b8c9d"], executable:true, backend:"aws", savings:121.472, risk:"low",
+    calls:["POST /aws/ec2/instances/i-1a7b8c9d/terminate"],
+    effect:"Terminates the instance. Root volume snapshot is retained for 30 days by policy."
+  },
+  {
+    id:"act_f2b8c9d0e002", src:"fleet-scan", impact:"high", op:"resize",
+    title:"Rightsize analytics-1 from r5.xlarge to r5.large — 35% average CPU, memory headroom unused",
+    rationale:"Sustained 35% CPU with peak 51%. One tier down keeps a 2x headroom on the observed peak. Compute Optimizer reaches the same conclusion.",
+    table:"ec2_instance_cost", match_column:"instance_type", match_value:"r5.xlarge",
+    targets:["i-2b8c9d0e"], executable:true, backend:"aws", savings:91.98, risk:"medium",
+    calls:["POST /aws/ec2/instances/i-2b8c9d0e/stop","POST /aws/ec2/instances/i-2b8c9d0e/resize","POST /aws/ec2/instances/i-2b8c9d0e/start"],
+    effect:"Stop, change instance type one tier down the r5 ladder, start. Approximately 90 seconds of downtime."
+  },
+  {
+    id:"act_f3e5b6a7f003", src:"fleet-scan", impact:"medium", op:"resize",
+    title:"Rightsize batch-1 from t3.large to t3.medium — 22% average CPU on a dev workload",
+    rationale:"The nightly batch job peaks at 34% CPU on a t3.large. A t3.medium absorbs that peak with burst credits to spare, and the instance is dev-tagged.",
+    table:"ec2_instance_cost", match_column:"instance_type", match_value:"t3.large",
+    targets:["i-0e5b6a7f"], executable:true, backend:"aws", savings:30.368, risk:"low",
+    calls:["POST /aws/ec2/instances/i-0e5b6a7f/stop","POST /aws/ec2/instances/i-0e5b6a7f/resize","POST /aws/ec2/instances/i-0e5b6a7f/start"],
+    effect:"Stop, change instance type one tier down the t3 ladder, start."
+  },
+  {
+    id:"act_f4f6a7b8e004", src:"fleet-scan", impact:"medium", op:"schedule",
+    title:"Switch dev-sandbox off outside working hours — 8% CPU and no activity logged after 19:00",
+    rationale:"A dev sandbox billed 24x7. Running it 08:00-20:00 on weekdays only removes roughly 70% of its hours with no effect on anyone's working day.",
+    table:"ec2_instance_cost", match_column:"instance_type", match_value:"t3.medium",
+    targets:["i-0f6a7b8e"], executable:true, backend:"aws", savings:21.258, risk:"low",
+    calls:["POST /aws/ec2/instances/i-0f6a7b8e/tags  {\"Schedule\":\"weekday-08-20\"}","POST /aws/ec2/instances/i-0f6a7b8e/stop"],
+    effect:"Applies a schedule tag and stops the instance now. The scheduler starts it again at 08:00 on the next working day."
+  },
+  {
+    id:"act_f5a1f2e3d005", src:"fleet-scan", impact:"medium", op:"resize",
+    title:"Rightsize web-prod-2 from m5.xlarge to m5.large — 48% average CPU",
+    rationale:"web-prod-2 averages 48% CPU against its m5.xlarge allocation. One tier down halves the cost, but this is a production web node behind the load balancer.",
+    table:"ec2_instance_cost", match_column:"instance_type", match_value:"m5.xlarge",
+    targets:["i-0b2e3f4c"], executable:true, backend:"aws", savings:70.08, risk:"high",
+    calls:["POST /aws/ec2/instances/i-0b2e3f4c/stop","POST /aws/ec2/instances/i-0b2e3f4c/resize","POST /aws/ec2/instances/i-0b2e3f4c/start"],
+    effect:"Stop, change instance type one tier down the m5 ladder, start. Takes one of two production web nodes out of the pool for roughly 90 seconds."
+  },
+  {
+    id:"act_f6c3d4e5b006", src:"fleet-scan", impact:"low", op:"tag",
+    title:"Retire eight provisioned services with zero billed usage across the observed window",
+    rationale:"AWS Glue, CloudWatch, SQS, SNS, Step Functions, KMS, X-Ray and DataZone all show $0.00 for the full window. They cost nothing today but each one carries configuration, IAM surface and audit weight that nobody is using.",
+    table:"service_daily_cost", match_column:"service", match_value:"Amazon DataZone",
+    targets:[], executable:true, backend:"aws", savings:0, risk:"low",
+    calls:["POST /aws/ec2/instances/*/tags  {\"CostOptimized\":\"true\"}"],
+    effect:"Tags the affected resources for decommissioning. No billed cost changes; this is hygiene and attack-surface reduction.",
+    note:"No direct saving — governance and surface reduction."
+  },
+  {
+    id:"act_03a18df1bcd4", src:"pipeline", impact:"high", op:"budget",
+    title:"Review and optimize AWS Cost Explorer usage (reduce frequency, disable unused reports, consider AWS Budgets for cost visibility).",
+    rationale:"Cost Explorer is $4,430.40 of $5,684.07 total spend — 78% of the account. The pipeline raised this as a high-severity anomaly. The executable half of this is a budget guardrail; the report cleanup itself is manual.",
+    table:"service_daily_cost", match_column:"service", match_value:"AWS Cost Explorer",
+    targets:[], executable:true, backend:"aws", savings:0, exposure:4430.4, risk:"low",
+    calls:["POST /aws/budgets  {\"name\":\"auto-from-recommendation\",\"limit\":100.0,\"scope\":\"service:EC2\"}"],
+    effect:"Creates the budget alert. Matches the stored result in outputs/pending_actions.json.",
+    note:"Guardrail — caps exposure on $4,430.40/mo, no immediate saving."
+  },
+  {
+    id:"act_e1d319489b6b", src:"pipeline", impact:"medium", op:"tag",
+    title:"Validate tax allocation and separate tax from operational cost reporting where appropriate.",
+    rationale:"Tax is $886.89, 15.6% of the observed total, and inflates every operational cost view it appears in. The planner resolves this to the Tax row of service_daily_cost, but there are no live instances behind it.",
+    table:"service_daily_cost", match_column:"service", match_value:"Tax",
+    targets:[], executable:true, backend:"aws", savings:0, risk:"low",
+    calls:["POST /aws/ec2/instances/*/tags  {\"CostOptimized\":\"true\"}"],
+    effect:"No matching live instances for service='Tax'. The executor acknowledges it rather than applying it — same outcome recorded in pending_actions.json.",
+    note:"Reporting correctness, not a saving."
+  },
+  {
+    id:"act_260596721e09", src:"pipeline", impact:"high", op:"manual",
+    title:"Implement daily cost anomaly detection with AWS Budgets/Alarms and investigate cost spikes (enable Cost Anomaly Detection, improve tagging).",
+    rationale:"Max daily cost $147.68 is 14.7x the $10.02 average and clears the common $50/day alert threshold. Nothing in the account currently notices a spike of that size.",
+    table:null, match_column:null, match_value:null,
+    targets:[], executable:false, backend:"csv", savings:0, risk:"low",
+    calls:[], effect:"Manual recommendation — acknowledged, no row to change."
+  },
+  {
+    id:"act_43f5e560c6fd", src:"pipeline", impact:"medium", op:"manual",
+    title:"Analyze EC2 utilization via Compute Optimizer and rightsize instances; evaluate purchasing Reserved Instances or Savings Plans.",
+    rationale:"The concrete half of this is already broken out into the four fleet-scan rightsizing requests above. What remains — the RI and Savings Plan commitment — is a purchasing decision, not an API call.",
+    table:null, match_column:null, match_value:null,
+    targets:[], executable:false, backend:"csv", savings:0, risk:"low",
+    calls:[], effect:"Manual recommendation — acknowledged, no row to change."
+  },
+  {
+    id:"act_5f48332674ba", src:"pipeline", impact:"low", op:"manual",
+    title:"Enforce consistent resource tagging and allocate costs to workloads for better visibility and accountability.",
+    rationale:"Only two project tags carry cost (Helios $60.74, Nimbus $30.37) against eight instances, so most spend is unattributable. A tagging policy is an organizational change, not a resource change.",
+    table:null, match_column:null, match_value:null,
+    targets:[], executable:false, backend:"csv", savings:0, risk:"low",
+    calls:[], effect:"Manual recommendation — acknowledged, no row to change."
+  }
+];
+
+const ST = {
+  OPEN:"open", PENDING_RE:"pending_re", STAGED_APPROVE:"staged_approve", STAGED_DECLINE:"staged_decline",
+  APPLIED:"applied", DECLINED:"declined", DISMISSED:"dismissed", ACK:"acknowledged"
+};
+const ST_LABEL = {
+  open:"Open", pending_re:"Awaiting RE approval",
+  staged_approve:"Staged to approve — awaiting commit", staged_decline:"Staged to decline — awaiting commit",
+  applied:"Applied to AWS",
+  declined:"Declined by RE team", dismissed:"Rejected by you", acknowledged:"Acknowledged"
+};
+
+const EMPLOYEE = {name:"Kuldeep Jeengar", initials:"KJ", role:"Engineer · Project Atlas"};
+const RE_USER  = {name:"Priya Raman", initials:"PR", role:"Resource Engineering · Approver"};
+
+/* =========================================================================
+   1b. BACKEND INTEGRATION
+   ========================================================================= */
+let liveMode = false;
+let latestPipelinePayload = null;
+
+/* =========================================================================
+   1a. TARGET SELECTOR (Local files / EC2 Rightsizing / Real AWS)
+   ------------------------------------------------------------------------
+   Persisted per-browser in localStorage so it survives a reload, but the
+   server's /api/target is authoritative (see server.py's _handle_get_target):
+   APP_CFG is shared across every tab hitting this server, so whichever
+   target the *last completed run* actually used is what stage/commit/apply/
+   rollback/fleet reads act against — this UI reflects that, it doesn't own it.
+   ========================================================================= */
+const TARGET_LABEL = {local_csv:"local_csv", ec2_rightsizing:"ec2_rightsizing", real_aws:"real_aws"};
+let currentTarget = localStorage.getItem("awsTarget") || "local_csv";
+
+function applyTargetToUI(){
+  const sel = document.getElementById("targetSelect");
+  if(sel){ sel.value = currentTarget; sel.dataset.target = currentTarget; }
+  const lbl = document.getElementById("runTargetLabel");
+  if(lbl) lbl.textContent = TARGET_LABEL[currentTarget] || currentTarget;
+  const warn = document.getElementById("runRealAwsWarn");
+  if(warn){
+    if(currentTarget === "real_aws"){
+      warn.hidden = false;
+      warn.innerHTML = `<div class="outcome no">${ICON.alert}
+        <div><span class="oh">This run will read your live AWS account.</span>
+        <span class="ob">Nothing writes to AWS from a run — approved changes still require the RE team to stage and commit them.</span></div></div>`;
+    } else { warn.hidden = true; warn.innerHTML = ""; }
+  }
+}
+
+async function syncTargetFromServer(){
+  try{
+    const data = await apiGet("/api/target");
+    if(data.target){ currentTarget = data.target; localStorage.setItem("awsTarget", currentTarget); }
+  }catch(e){ /* offline/demo mode — keep whatever localStorage/default had */ }
+  applyTargetToUI();
+}
+
+async function apiGet(path){
+  const r = await fetch(path);
+  const data = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(data.error || (path + " -> HTTP " + r.status));
+  return data;
+}
+async function apiPost(path, body){
+  const r = await fetch(path, {
+    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})
+  });
+  const data = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(data.error || (path + " -> HTTP " + r.status));
+  return data;
+}
+
+/* Spinner for any button that kicks off a backend call — shown from the
+   click until the request settles and the surrounding list re-renders.
+   Safe to call even if the button gets replaced by that re-render (a stale
+   reference just does nothing visible). */
+function setBusy(btn){
+  if(!btn || btn.dataset.busy === "1") return;
+  btn.dataset.busy = "1";
+  btn.dataset.prevHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.classList.add("is-busy");
+  btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>' + btn.innerHTML;
+}
+function clearBusy(btn){
+  if(!btn || btn.dataset.busy !== "1") return;
+  btn.innerHTML = btn.dataset.prevHtml;
+  delete btn.dataset.prevHtml;
+  delete btn.dataset.busy;
+  btn.disabled = false;
+  btn.classList.remove("is-busy");
+}
+
+const BACKEND_TO_UI_STATUS = {
+  pending:"open", pending_re:"pending_re",
+  staged_approve:"staged_approve", staged_decline:"staged_decline",
+  applied:"applied", acknowledged:"acknowledged", declined:"declined", dismissed:"dismissed"
+};
+function riskFor(a){
+  if(!a.executable) return "low";
+  const touchesProd = (a.targets||[]).some(id => {
+    const i = fleet.find(f => f.id === id); return i && i.env === "prod";
+  });
+  if(touchesProd) return "high";
+  if(["resize","stop","terminate"].includes(a.op)) return "medium";
+  return "low";
+}
+function effectFor(a){
+  if(!a.executable) return "Manual recommendation — acknowledged, no row to change.";
+  if(a.backend === "aws"){
+    return (a.targets||[]).length
+      ? `Resolves to ${a.targets.length} live instance(s); operation: ${a.op || "stop"}.`
+      : `No matching live instances for ${a.match_column} = "${a.match_value}" — acknowledged instead of applied.`;
+  }
+  return `Writes the matching row in ${a.table}.csv to outputs/applied/<run>/ (source CSV left untouched).`;
+}
+function mapAction(a){
+  const calls = (a.calls_preview && a.calls_preview.length) ? a.calls_preview
+    : (a.executable && a.table
+        ? [`Write ${a.table}.csv row [${a.match_column} = "${a.match_value}"] -> ${Object.keys(a.set_fields||{}).join(", ") || "applied_at"}`]
+        : []);
+  return {
+    id:a.id, run_id:a.run_id, src: a.backend === "aws" ? "fleet-scan" : "pipeline",
+    impact:a.impact || "medium", op:a.op || "",
+    title:a.title,
+    rationale: a.table
+      ? `Matches the highest-cost entity mentioned in this recommendation: ${a.table} where ${a.match_column} = "${a.match_value}".`
+      : "No matching cost entity found in the current data — surfaced for visibility only.",
+    table:a.table, match_column:a.match_column, match_value:a.match_value,
+    targets:a.targets || [], executable:!!a.executable, backend:a.backend,
+    savings:a.estimated_savings || 0,
+    risk: (a.risk_level && a.risk_level !== "unknown") ? a.risk_level : riskFor(a),
+    riskReason: a.risk_reason || null,
+    citations: a.citations || [],
+    calls, effect: effectFor(a),
+    status: BACKEND_TO_UI_STATUS[a.status] || "open",
+    raisedAt: fmtTime(a.raised_at), decidedAt: fmtTime(a.decided_at),
+    stagedBy: a.staged_by, stagedAt: fmtTime(a.staged_at), commitBatchId: a.commit_batch_id,
+    reason: a.decline_reason, resultNote: a.result_note,
+    note: !a.executable ? "No resource to change — acknowledge only." : null
+  };
+}
+function mapDecision(e){
+  const kind = e.decision === "approved" ? "ok" : e.decision === "declined" ? "no" : "wait";
+  const label = {
+    raised:"Raised for approval", withdrawn:"Withdrawn by requester", reopened:"Reopened",
+    approved:"Approved by " + (e.actor || "RE team"), declined:"Declined by " + (e.actor || "RE team")
+  }[e.decision] || e.decision;
+  return {at: fmtTime(e.at) || "—", id:e.action_id, title:e.title, decision:label, kind,
+          savings:e.estimated_savings || 0, note:e.note || ""};
+}
+function mapInstance(i, prevFleet){
+  const tagVal = k => { const t = (i.Tags||[]).find(t => t.Key === k); return t ? t.Value : ""; };
+  const was = (prevFleet||[]).find(p => p.id === i.InstanceId);
+  return {
+    id:i.InstanceId, name: tagVal("Name") || i.InstanceId,
+    type:i.InstanceType, origType: was ? was.origType : i.InstanceType,
+    region:i.Region || "", cpu: i.CpuUtilization != null ? Math.round(i.CpuUtilization) : 0,
+    env: tagVal("Env") || "unknown", project: tagVal("Project") || "untagged",
+    state: (i.State && i.State.Name) || "running"
+  };
+}
+
+async function loadState(fresh){
+  // Fleet and actions/decisions are independent reads — fetch them together
+  // instead of one after another, so a click waits for the slower of the two
+  // instead of their sum. Pass fresh:true (e.g. an explicit "Refresh") to
+  // bypass the server's short fleet cache and force a live AWS read.
+  const fleetPromise = apiGet("/api/aws/fleet" + (fresh ? "?fresh=1" : ""))
+    .then(fleetData => {
+      fleet = fleetData.available
+        ? fleetData.instances.map(i => mapInstance(i, fleet))
+        : (fleet.length ? fleet : FLEET_SEED.map(i => ({...i, origType:i.type})));
+    })
+    .catch(() => {
+      fleet = fleet.length ? fleet : FLEET_SEED.map(i => ({...i, origType:i.type}));
+    });
+
+  const actionsPromise = Promise.all([apiGet("/api/actions"), apiGet("/api/decisions")])
+    .then(([actionsData, decisionsData]) => {
+      recs = (actionsData.actions || []).map(mapAction);
+      log = (decisionsData.decisions || []).map(mapDecision);
+      liveMode = true;
+    })
+    .catch(() => {
+      liveMode = false;
+      recs = REC_SEED.map(r => ({...r, status:ST.OPEN, raisedAt:null, decidedAt:null, reason:null, resultNote:null}));
+      log = [];
+    });
+
+  await Promise.all([fleetPromise, actionsPromise]);
+  updateProvenanceBadge();
+}
+function updateProvenanceBadge(){
+  const el = document.getElementById("provStatus");
+  if(!el) return;
+  el.innerHTML = liveMode
+    ? `<b style="color:var(--good)">● Live</b> — connected to the pipeline backend, ${recs.length} action(s) loaded`
+    : `<b style="color:var(--warning)">● Demo data</b> — backend unreachable, showing static seed data`;
+}
+
+/* =========================================================================
+   1c. RUN A NEW ANALYSIS
+   ========================================================================= */
+const RUN_STEP_DEFS = [
+  {key:"inputs",         name:"Loading input sources"},
+  {key:"step1",          name:"Simplify & Normalize (LLM)"},
+  {key:"step2",          name:"Context Load"},
+  {key:"forecast",       name:"Cost Forecast"},
+  {key:"tag_governance", name:"Tag Governance"},
+  {key:"root_cause",     name:"Anomaly Root Cause"},
+  {key:"step3_1",        name:"Generate Charts (LLM)"},
+  {key:"step3_2",        name:"Analysis & Metrics (LLM)"},
+  {key:"step3_3",        name:"Executive Summary (LLM)"},
+  {key:"step4",          name:"Combine All Responses"},
+  {key:"step5",          name:"Final Response"}
+];
+const RUN_VERBS = ["manifesting","loading","percolating","brewing","conjuring","untangling",
+  "synthesizing","computing","crunching","thinking","polishing"];
+
+let runInFlight = false;
+
+async function streamRunSSE(body, onEvent){
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buf = "", finished = false;
+  while(!finished){
+    const {value, done} = await reader.read();
+    if(done) break;
+    buf += decoder.decode(value, {stream:true});
+    let idx;
+    while((idx = buf.indexOf("\n\n")) !== -1){
+      const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+      let event = "message", dataLines = [];
+      for(const line of chunk.split("\n")){
+        if(line.startsWith("event:")) event = line.slice(6).trim();
+        else if(line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      let data = {}; try{ data = dataLines.length ? JSON.parse(dataLines.join("\n")) : {}; }catch(e){ data = {}; }
+      onEvent(event, data);
+      if(event === "done"){ finished = true; try{ await reader.cancel(); }catch(e){} break; }
+    }
+  }
+}
+
+function buildRunSteps(){
+  const host = document.getElementById("runSteps");
+  host.hidden = false;
+  return Shared.buildFlowchart(host, RUN_STEP_DEFS);
+}
+function runStepStart(steps, key, label){
+  const s = steps[key]; if(!s) return;
+  s.el.dataset.state = "running";
+  if(label) s.el.querySelector(".rs-name").textContent = label;
+  const verbEl = s.el.querySelector(".rs-verb");
+  const cycle = () => { verbEl.textContent = RUN_VERBS[Math.floor(Math.random()*RUN_VERBS.length)] + "…"; };
+  cycle();
+  s.timer = setInterval(cycle, 1100);
+  // Same narrow-viewport fix as web/app.js's setRunning(): keep the active
+  // step visible instead of letting it sit off-screen in the horizontal scroller.
+  s.el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+}
+function runStepDone(steps, key, label, elapsed, refreshEdges){
+  const s = steps[key]; if(!s) return;
+  if(s.timer){ clearInterval(s.timer); s.timer = null; }
+  s.el.dataset.state = "done";
+  if(label) s.el.querySelector(".rs-name").textContent = label;
+  s.el.querySelector(".rs-verb").textContent = "";
+  if(typeof elapsed === "number") s.el.querySelector(".rs-time").textContent = fmtStepElapsed(elapsed);
+  if(refreshEdges) refreshEdges();
+}
+
+function rrBadge(level){
+  const cls = ["high","medium","low"].includes(level) ? level : "low";
+  return level ? `<span class="chip impact-${cls}">${esc(level)}</span> ` : "";
+}
+function rrKpiValue(v){
+  if(v == null) return "—";
+  if(typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(6);
+  if(typeof v === "object") return Object.entries(v)
+    .map(([k,val]) => `${k}: ${typeof val === "number" ? Number(val).toFixed(4) : val}`).join(", ");
+  return String(v);
+}
+function rrList(title, items, render){
+  if(!items || !items.length) return "";
+  return `<div class="rr-section"><h4>${esc(title)}</h4><ul class="rr-list">${
+    items.map(it => `<li>${render(it)}</li>`).join("")}</ul></div>`;
+}
+function renderFinalReport(result){
+  const host = document.getElementById("runReport");
+  const payload = result && result.payload ? result.payload : (result || {});
+  latestPipelinePayload = {...payload, run_id: (result && result.run_id) || payload.run_id};
+  const analysis = payload.analysis || {};
+  const summary = payload.summary || {};
+  const bm = payload.business_metadata || {};
+  const kpis = analysis.kpis || {};
+  const recItems = (summary.recommendations && summary.recommendations.length)
+    ? summary.recommendations
+    : ((result && result.actions) || []).map(a => ({
+        impact: a.impact || "medium",
+        action: a.title || a.id || "Recommendation",
+        title: a.title || a.id || "Recommendation"
+      }));
+
+  const kpiCards = Object.entries(kpis).filter(([k]) => k !== "total_cost").map(([k,v]) => `
+    <div class="rr-kpi"><div class="rk-name">${esc(k.replaceAll("_"," "))}</div>
+    <div class="rk-val">${esc(rrKpiValue(v))}</div></div>`).join("");
+  const totalCost = bm.total_cost_observed;
+  const totalCard = totalCost != null
+    ? `<div class="rr-kpi"><div class="rk-name">Total observed cost</div><div class="rk-val">$${Number(totalCost).toFixed(6)}</div></div>`
+    : "";
+
+  const findingsHtml = rrList("Key findings", summary.key_findings || [], s => esc(s));
+  const anomaliesHtml = rrList("Anomalies", analysis.anomalies || [],
+    a => `${rrBadge(a.severity)}${a.source === "detector" ? '<span class="chip" title="Found by the statistical anomaly detector, not the LLM">detected</span> ' : ""}${esc(a.finding || "")} <span style="color:var(--text-muted)">— ${esc(a.evidence || "")}</span>`);
+  const trendsHtml = rrList("Trends", analysis.trends || [],
+    t => `${esc(t.observation || "")} <span style="color:var(--text-muted)">(${esc(t.metric || "")})</span>`);
+  const recsHtml = rrList("Recommendations from this run", recItems,
+    r => `${rrBadge(r.impact)}${esc(r.action || r.title || "")}`);
+  const nextStepsHtml = rrList("Next steps", summary.next_steps || [], s => esc(s));
+
+  host.innerHTML = `
+    <div class="rr-section"><h4>Results — ${esc(latestPipelinePayload.run_id || "this run")}</h4>
+      <div class="rr-kpi-grid">${totalCard}${kpiCards}</div>
+      <p class="csub" style="margin-top:9px">Charts below (Where the money goes, Daily spend, Cost by region) now reflect this run.</p>
+    </div>
+    ${findingsHtml}${anomaliesHtml}${trendsHtml}${recsHtml}${nextStepsHtml}
+    <div class="rr-section">
+      <h4>Ask a follow-up</h4>
+      <form class="followup-form" style="display:flex;gap:8px;align-items:flex-start">
+        <textarea class="followup-input" rows="2" style="flex:1;resize:vertical;min-height:38px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;background:var(--surface)" placeholder="e.g. which region cost the most, and why?"></textarea>
+        <button class="btn btn-quiet" type="submit">Ask</button>
+      </form>
+      <div class="followup-answer" style="margin-top:10px" hidden></div>
+    </div>`;
+  host.hidden = false;
+  wireFollowUp(host);
+
+  const provCharts = document.getElementById("provCharts");
+  if(provCharts){
+    provCharts.innerHTML = `<b>Charts above</b> reflect run <span class="mono">${esc(latestPipelinePayload.run_id || "latest")}</span>` +
+      (bm.total_cost_observed != null ? ` — $${Number(bm.total_cost_observed).toFixed(2)} observed` : "");
+  }
+}
+
+function wireFollowUp(host){
+  const form = host.querySelector(".followup-form");
+  const input = host.querySelector(".followup-input");
+  const answerEl = host.querySelector(".followup-answer");
+  if(!form || !input || !answerEl) return;
+
+  form.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const question = input.value.trim();
+    if(!question) return;
+    const btn = form.querySelector("button");
+    btn.disabled = true;
+    answerEl.hidden = false;
+    answerEl.className = "followup-answer outcome wait";
+    answerEl.innerHTML = `${ICON.clock}<div><span class="oh">Thinking…</span></div>`;
+    try{
+      const res = await fetch("/api/chat", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({question})
+      });
+      const data = await res.json();
+      answerEl.className = "followup-answer outcome ok";
+      const citations = (data.citations||[]).length
+        ? `<p class="ob">Based on: ${esc(data.citations.join(", "))}</p>` : "";
+      answerEl.innerHTML = `${ICON.check}<div><div class="oh md">${Shared.renderMarkdown(data.answer || "No answer.")}</div>${citations}</div>`;
+    }catch(e){
+      answerEl.className = "followup-answer outcome no";
+      answerEl.innerHTML = `${ICON.x}<div><span class="oh">Request failed: ${esc(e.message || String(e))}</span></div>`;
+    }finally{
+      btn.disabled = false;
+      input.value = "";
+    }
+  });
+}
+
+async function startPipelineRun(){
+  if(runInFlight) return;
+  runInFlight = true;
+  const startBtn = document.getElementById("runStart");
+  startBtn.disabled = true;
+  startBtn.classList.add("is-busy");
+  startBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Running…';
+  const resultEl = document.getElementById("runResult");
+  resultEl.innerHTML = "";
+  document.getElementById("runReport").hidden = true;
+  const {steps, refreshEdges} = buildRunSteps();
+
+  // Reset instantly: the backend drops every action left over from the
+  // previous run the moment /api/run is called, so the Recommendations/queue
+  // lists shouldn't keep showing that run's applied/rejected entries while
+  // this one is in flight.
+  recs = [];
+  recFilter = "open";
+  renderAll();
+
+  const dateRange = document.getElementById("runDateRange").value || null;
+  const query = "Provide a comprehensive AWS cost analysis with key insights and recommendations.";
+
+  try{
+    const res = await fetch("/api/run", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({query, target: currentTarget, date_range: dateRange})
+    });
+    if(!res.ok || !res.body) throw new Error("HTTP " + res.status);
+    await streamRunSSE(res.body, (event, data) => {
+      if(event === "step_start") return runStepStart(steps, data.step, data.label);
+      if(event === "step_complete") return runStepDone(steps, data.step, data.label, data.elapsed_s, refreshEdges);
+      if(event === "final"){
+        const actions = (data.result && data.result.actions) || [];
+        const executable = actions.filter(a => a.executable).length;
+        resultEl.innerHTML = `<div class="outcome ok" style="margin-top:11px">${ICON.check}
+          <div><span class="oh">Run complete.</span>
+          <span class="ob">${actions.length} recommendation(s) planned, ${executable} executable. Refreshing the dashboard below…</span></div></div>`;
+        if(data.result) renderFinalReport(data.result);
+        return;
+      }
+      if(event === "error"){
+        resultEl.innerHTML = `<div class="outcome no" style="margin-top:11px">${ICON.x}
+          <div><span class="oh">Pipeline error.</span> <span class="ob">${esc(data.message || "Unknown error")}</span></div></div>`;
+      }
+    });
+  }catch(e){
+    resultEl.innerHTML = `<div class="outcome no" style="margin-top:11px">${ICON.x}
+      <div><span class="oh">Request failed.</span> <span class="ob">${esc(e.message)}</span></div></div>`;
+  }
+
+  await Promise.all([loadState(), syncTargetFromServer()]);
+  renderAll();
+  toast("ok", "Dashboard refreshed", "Recommendations, queue and fleet now reflect the new run.");
+  runInFlight = false;
+  startBtn.disabled = false;
+  startBtn.classList.remove("is-busy");
+  startBtn.textContent = "Start run";
+}
+
+document.getElementById("runToggle").addEventListener("click", () => {
+  const body = document.getElementById("runBody");
+  const shown = !body.hidden;
+  body.hidden = shown;
+  document.getElementById("runToggle").setAttribute("aria-pressed", String(!shown));
+  document.getElementById("runToggle").textContent = shown ? "Run pipeline" : "Hide";
+});
+document.getElementById("runStart").addEventListener("click", startPipelineRun);
+
+/* =========================================================================
+   2. STATE
+   ========================================================================= */
+let fleet = [];
+let recs  = [];
+let log   = [];
+let role  = "emp";
+let recFilter = "open";
+let clock = new Date("2026-07-27T09:40:00");
+
+function resetState(){
+  fleet = FLEET_SEED.map(i => ({...i, origType:i.type}));
+  recs  = REC_SEED.map(r => ({...r, status:ST.OPEN,
+                              raisedAt:null, decidedAt:null, reason:null, resultNote:null}));
+  log = [];
+  latestPipelinePayload = null;
+  clock = new Date("2026-07-27T09:40:00");
+  recFilter = "open";
+}
+function emptyState(){
+  fleet = [];
+  recs = [];
+  log = [];
+  latestPipelinePayload = null;
+  recFilter = "open";
+}
+
+function tick(minutes){ clock = new Date(clock.getTime() + minutes*60000); return stamp(); }
+function stamp(){
+  return clock.toISOString().replace("T"," ").slice(0,16) + " UTC";
+}
+
+/* ---- derived ---- */
+function instCost(i){
+  if(i.state === "terminated" || i.state === "stopped") return 0;
+  if(i.state === "scheduled")  return monthlyOf(i.type) * 0.30;
+  return monthlyOf(i.type);
+}
+function fleetCost(list){ return (list||fleet).reduce((s,i) => s + instCost(i), 0); }
+function liveFleet(){ return fleet.filter(i => i.state !== "terminated"); }
+function utilBand(i){
+  if(i.state !== "running") return "off";
+  if(i.cpu <= 10) return "idle";
+  if(i.cpu <= 45) return "under";
+  return "right";
+}
+
+function byId(id){ return recs.find(r => r.id === id); }
+function queue(){ return recs.filter(r => r.status === ST.PENDING_RE); }
+function stagedQueue(){ return recs.filter(r => r.status === ST.STAGED_APPROVE || r.status === ST.STAGED_DECLINE); }
+function pendingTargets(){
+  const s = new Set();
+  queue().forEach(r => (r.targets||[]).forEach(t => s.add(t)));
+  stagedQueue().forEach(r => (r.targets||[]).forEach(t => s.add(t)));
+  return s;
+}
+function commitReadiness(){
+  const undecided = queue().length;
+  const staged = stagedQueue();
+  const stagedApprove = staged.filter(r => r.status === ST.STAGED_APPROVE);
+  const stagedDecline = staged.filter(r => r.status === ST.STAGED_DECLINE);
+  return {
+    undecided, stagedApprove, stagedDecline,
+    ready: undecided === 0 && staged.length > 0,
+    estimatedSavings: stagedApprove.reduce((s,r) => s + r.savings, 0),
+  };
+}
+
+const filters = {env:"all", region:"all", project:"all"};
+function fleetInScope(){
+  return liveFleet().filter(i =>
+    (filters.env==="all"     || i.env===filters.env) &&
+    (filters.region==="all"  || i.region===filters.region) &&
+    (filters.project==="all" || i.project===filters.project));
+}
+function recInScope(r){
+  if(r.src !== "fleet-scan" || !(r.targets||[]).length) return true;
+  const ids = new Set(fleetInScope().map(i => i.id));
+  return r.targets.some(t => ids.has(t));
+}
+
+/* =========================================================================
+   3. RENDER — employee dashboard
+   ========================================================================= */
+function windowLabel(dayCount){
+  if(!dayCount) return "30-day";
+  if(dayCount === 1) return "1-day";
+  return `${dayCount}-day`;
+}
+function buildPipelineChartRows(payload, path, labelKey, valueKey){
+  const source = path.split(".").reduce((acc, key) => (acc ? acc[key] : undefined), payload);
+  if(!Array.isArray(source)) return [];
+  return source.map(item => [
+    String(item?.[labelKey] ?? item?.x ?? item?.name ?? ""),
+    Number(item?.[valueKey] ?? item?.y ?? item?.cost ?? 0)
+  ]).filter(([, value]) => Number.isFinite(value));
+}
+function pipelineDailySeries(payload){
+  // Preferred: step2_context_load.py builds a "<table>__by_date" correlation
+  // (chronologically sorted) for any table with a date column.
+  const byDate = buildPipelineChartRows(payload, "correlations.service_daily_cost__by_date", "date", "cost");
+  if(byDate.length) return byDate;
+  // Fallback: an older cached run, or a source without service_daily_cost.
+  const dateFields = ["date","day","timestamp","month"];
+  const chart = (payload.charts || []).find(c =>
+    dateFields.includes(String(c.x_field || c.x || "").toLowerCase()) && c.data && c.data.length);
+  return chart ? chart.data.map(d => [String(d.x), Number(d.y) || 0]) : [];
+}
+function getPipelineChartData(){
+  if(!latestPipelinePayload) return {service:[], daily:[], region:[]};
+  const payload = latestPipelinePayload;
+  return {
+    service: buildPipelineChartRows(payload, "correlations.service_daily_cost__by_service", "service", "cost"),
+    daily: pipelineDailySeries(payload),
+    region: buildPipelineChartRows(payload, "correlations.region_cost__by_region", "region", "cost")
+  };
+}
+
+function renderStatStrip(){
+  const open = recs.filter(r => r.status === ST.OPEN).length;
+  const awaiting = recs.filter(r => r.status === ST.PENDING_RE).length;
+  const applied = recs.filter(r => r.status === ST.APPLIED);
+  const declined = recs.filter(r => r.status === ST.DECLINED).length;
+  const saved = applied.reduce((s,r) => s + r.savings, 0);
+  const cells = [
+    ["var(--series-1)", open, "Open recommendations"],
+    ["var(--warning)", awaiting, "Awaiting RE approval"],
+    ["var(--good)", applied.length, "Applied to AWS"],
+    ["var(--critical)", declined, "Declined by RE team"],
+    ["var(--accent)", money(saved), "Est. monthly saved"],
+  ];
+  document.getElementById("statStrip").innerHTML = cells.map(([color,val,label]) => `
+    <div class="stat-cell"><span class="rail" style="background:${color}"></span>
+      <div class="sv">${val}</div><div class="sn">${esc(label)}</div></div>`).join("");
+}
+
+function renderEmployee(){
+  const pipelineReady = !!latestPipelinePayload;
+  const open      = pipelineReady ? recs.filter(r => r.status === ST.OPEN && recInScope(r)) : [];
+  const pending   = pipelineReady
+    ? recs.filter(r => [ST.PENDING_RE, ST.STAGED_APPROVE, ST.STAGED_DECLINE].includes(r.status))
+    : [];
+  const applied   = pipelineReady ? recs.filter(r => r.status === ST.APPLIED) : [];
+  const declined  = pipelineReady ? recs.filter(r => r.status === ST.DECLINED) : [];
+  const dismissed = pipelineReady ? recs.filter(r => r.status === ST.DISMISSED || r.status === ST.ACK) : [];
+
+  renderStatStrip();
+  renderRealAwsWarning("empRealAwsWarn");
+
+  const openSavings = open.reduce((s,r) => s + r.savings, 0);
+  const running = liveFleet().filter(i => i.state === "running").length;
+  const total = liveFleet().length;
+
+  document.getElementById("empStatus").innerHTML = !pipelineReady
+    ? `Waiting on a pipeline run — use "Run a new analysis" above.`
+    : (open.length
+        ? `<b>${money(openSavings)}</b>/mo available across ${open.length} open recommendation${open.length>1?"s":""}` +
+          (openSavings === 0 ? " (governance only — no direct saving)" : "")
+        : "Every recommendation in scope has been decided.")
+      + ` &nbsp;·&nbsp; <b>${running} of ${total}</b> fleet instances running`;
+
+  drawServiceChart();
+  drawDailyChart();
+  drawFleetChart();
+  drawRegionChart();
+  drawForecastChart();
+  drawTagGovernanceChart();
+  drawRootCauseChart();
+
+  const counts = {
+    open: open.length, pending_re: pending.length, applied: applied.length,
+    declined: declined.length, dismissed: dismissed.length
+  };
+  const tabs = [
+    ["open","Open"], ["pending_re","Awaiting RE"], ["applied","Applied"],
+    ["declined","Declined by RE"], ["dismissed","Rejected / acknowledged"]
+  ];
+  document.getElementById("recTabs").innerHTML = !pipelineReady ? "" : tabs.map(([k,l]) =>
+    `<button class="rec-tab" role="tab" data-f="${k}" aria-selected="${recFilter===k}" type="button">
+       ${l}<span class="c">${counts[k]}</span></button>`).join("");
+
+  let list;
+  if(recFilter === "open")            list = open;
+  else if(recFilter === "pending_re") list = pending;
+  else if(recFilter === "applied")    list = applied;
+  else if(recFilter === "declined")   list = declined;
+  else                                list = dismissed;
+
+  const host = document.getElementById("recList");
+  host.innerHTML = !pipelineReady
+    ? `<div class="empty">No data yet — use "Run a new analysis" above. Recommendations appear here once a run completes.</div>`
+    : list.length
+      ? list.map(recCard).join("")
+      : `<div class="empty">${
+          liveMode && recs.length === 0
+          ? "No recommendations yet. Run the pipeline from the main dashboard (/) to generate some."
+          : "Nothing in this tab." + (recFilter==="open" && liveFleet().length !== fleetInScope().length
+              ? " Some recommendations may be hidden by the filters above." : "")
+        }</div>`;
+}
+
+function railColor(r){
+  if(r.status === ST.APPLIED)  return "var(--good)";
+  if(r.status === ST.DECLINED) return "var(--critical)";
+  if(r.status === ST.STAGED_APPROVE) return "var(--accent)";
+  if(r.status === ST.STAGED_DECLINE) return "var(--critical)";
+  if(r.status === ST.PENDING_RE) return "var(--warning)";
+  if(r.status === ST.DISMISSED || r.status === ST.ACK) return "var(--border)";
+  return r.impact === "high" ? "var(--critical)"
+       : r.impact === "medium" ? "var(--warning)" : "var(--good)";
+}
+function targetChips(r){
+  if(!r.targets.length) return "";
+  return r.targets.map(id => {
+    const i = fleet.find(x => x.id === id);
+    return `<span class="chip mono">${esc(id)}${i ? " · " + esc(i.name) : ""}</span>`;
+  }).join("");
+}
+function planBlock(r){
+  const rows = [];
+  if(r.table)  rows.push(["Planner target", `${r.table} · ${r.match_column} = "${r.match_value}"`]);
+  rows.push(["Resolved operation", r.op]);
+  rows.push(["Backend", r.backend]);
+  rows.push(["Executable", r.executable ? "yes" : "no — manual, acknowledge only"]);
+  if(r.targets.length) rows.push(["Instances", r.targets.join(", ")]);
+  rows.push(["Effect", r.effect]);
+  return `
+    <details class="plan-wrap">
+      <summary>${ICON.caret} What this changes in AWS</summary>
+      <div class="plan">
+        <div class="pt">Action descriptor</div>
+        <dl class="kv">${rows.map(([k,v]) =>
+          `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+        ${r.calls.length ? `<div class="pt" style="margin-top:11px">API calls on approval</div>
+          <div class="calls">${r.calls.map(c => `<div class="call">${esc(c)}</div>`).join("")}</div>` : ""}
+        ${(r.citations || []).length ? `<div class="pt" style="margin-top:11px">Supporting data</div>
+          <dl class="kv">${r.citations.map(c =>
+            `<dt>${esc(c.table)}</dt><dd>${esc(c.column)} = "${esc(c.value)}" · ${money2(c.cost)}/mo</dd>`
+          ).join("")}</dl>` : ""}
+      </div>
+    </details>`;
+}
+function recCard(r){
+  const savingLine = r.savings > 0
+    ? `<div class="sv">${money2(r.savings)}</div><div class="sl">saved / month</div>`
+    : r.exposure
+      ? `<div class="sv" style="font-size:16px;color:var(--text-secondary)">${money(r.exposure)}</div>
+         <div class="sl">exposure capped / month</div>`
+      : `<div class="sv" style="font-size:16px;color:var(--text-secondary)">—</div>
+         <div class="sl">no direct saving</div>`;
+
+  let footer = "";
+  if(r.status === ST.OPEN){
+    footer = r.executable
+      ? `<div class="actions">
+           <button class="btn btn-primary" data-accept="${r.id}" type="button">Accept — raise to RE team</button>
+           <button class="btn btn-danger" data-reject="${r.id}" type="button">Reject</button>
+           <span style="font-size:11.5px;color:var(--text-muted)">Accepting sends a request. Nothing touches AWS until the RE team approves it.</span>
+         </div>`
+      : `<div class="actions">
+           <button class="btn btn-quiet" data-ack="${r.id}" type="button">Acknowledge</button>
+           <span style="font-size:11.5px;color:var(--text-muted)">Manual recommendation — there is no resource to change, so it is never sent for approval.</span>
+         </div>`;
+  } else if(r.status === ST.PENDING_RE){
+    footer = `
+      <div class="outcome wait">${ICON.clock}
+        <div><span class="oh">Waiting on the RE team.</span>
+        <span class="ob">Raised ${esc(r.raisedAt)}. You can withdraw it until they decide.</span></div></div>
+      <div class="actions"><button class="btn btn-quiet" data-withdraw="${r.id}" type="button">Withdraw request</button></div>`;
+  } else if(r.status === ST.STAGED_APPROVE){
+    footer = `<div class="outcome wait">${ICON.clock}
+        <div><span class="oh">Staged to approve by the RE team.</span>
+        <span class="ob">Not applied yet — it lands once the whole queue is triaged and the RE team commits the batch.</span></div></div>`;
+  } else if(r.status === ST.STAGED_DECLINE){
+    footer = `<div class="outcome wait">${ICON.clock}
+        <div><span class="oh">Staged to decline by the RE team.</span>
+        <span class="ob">Reason: ${esc(r.reason || "no reason recorded")}. Not final until they commit the batch — they can still change their mind.</span></div></div>`;
+  } else if(r.status === ST.APPLIED){
+    footer = `<div class="outcome ok">${ICON.check}
+        <div><span class="oh">Approved by the RE team and applied to AWS.</span>
+        <span class="ob">${esc(r.resultNote || "")} Decided ${esc(r.decidedAt)}.</span></div></div>`;
+  } else if(r.status === ST.DECLINED){
+    footer = `<div class="outcome no">${ICON.x}
+        <div><span class="oh">Declined by the RE team — not applied.</span>
+        <span class="ob">Reason: ${esc(r.reason || "no reason recorded")} Decided ${esc(r.decidedAt)}.</span></div></div>
+      <div class="actions"><button class="btn btn-quiet" data-reopen="${r.id}" type="button">Revise and raise again</button></div>`;
+  } else if(r.status === ST.DISMISSED){
+    footer = `<div class="outcome info">${ICON.info}
+        <div><span class="oh">You rejected this.</span>
+        <span class="ob">It was never sent to the RE team. Decided ${esc(r.decidedAt)}.</span></div></div>
+      <div class="actions"><button class="btn btn-quiet" data-reopen="${r.id}" type="button">Reopen</button></div>`;
+  } else if(r.status === ST.ACK){
+    footer = `<div class="outcome info">${ICON.info}
+        <div><span class="oh">Acknowledged.</span>
+        <span class="ob">Tracked for the next run; no resource change is possible from here. ${esc(r.decidedAt)}.</span></div></div>`;
+  }
+
+  return `
+  <article class="rec">
+    <span class="rail" style="background:${railColor(r)}"></span>
+    <div class="rec-top">
+      <div style="min-width:0;flex:1">
+        <div class="chips">
+          <span class="chip impact-${r.impact}">${IMPACT_ICON[r.impact]}${r.impact} impact</span>
+          <span class="chip st-${r.status}">${esc(ST_LABEL[r.status])}</span>
+          <span class="chip">${r.src === "pipeline" ? "pipeline recommendation" : "live fleet scan"}</span>
+          <span class="chip mono">${esc(r.id)}</span>
+          ${targetChips(r)}
+        </div>
+        <h4>${esc(r.title)}</h4>
+        <p class="rationale">${esc(r.rationale)}</p>
+      </div>
+      <div class="save">${savingLine}</div>
+    </div>
+    ${planBlock(r)}
+    ${r.note ? `<p class="rationale" style="margin-top:-4px">${ICON.info} ${esc(r.note)}</p>` : ""}
+    ${footer}
+  </article>`;
+}
+
+/* ---- chart draws (employee) ---- */
+function chartEmptyState(hostId, tableId, captionId, footId, footLabel){
+  document.getElementById(hostId).innerHTML =
+    `<div class="empty">No data yet — use "Run a new analysis" above.</div>`;
+  document.getElementById(tableId).innerHTML = "";
+  document.getElementById(captionId).textContent = "Waiting on a pipeline run.";
+  document.getElementById(footId).innerHTML = footLabel;
+}
+function drawServiceChart(){
+  const pipeline = getPipelineChartData();
+  const winLbl = windowLabel(pipeline.daily.length);
+  const hdr = document.getElementById("hdrService");
+  if(hdr) hdr.textContent = `Where the money goes — ${winLbl} cost by service`;
+  if(!pipeline.service.length){
+    return chartEmptyState("chartService","tblService","captionService","footService",
+      `Source: <span class="mono">correlations.service_daily_cost__by_service</span>`);
+  }
+  const full = pipeline.service;
+  const total = full.reduce((s,d) => s + d[1], 0);
+  const top = full.slice(0,6);
+  const restCount = Math.max(0, full.length - 6);
+  const rest = full.slice(6).reduce((s,d) => s + d[1], 0);
+  const data = restCount ? [...top, [`Other (${restCount} services)`, rest]] : top;
+  hbarChart(document.getElementById("chartService"), data,
+            {total, aria:`${winLbl} cost by AWS service`, costLabel:`${winLbl} cost`});
+  renderTable(document.getElementById("tblService"),
+    [{label:"Service"},{label:`${winLbl} cost`, num:true},{label:"Share", num:true}],
+    full.map(d => [d[0], money2(d[1]), total ? ((d[1]/total)*100).toFixed(2) + "%" : "0.00%"]));
+
+  const top1 = full[0];
+  document.getElementById("captionService").textContent = top1
+    ? `${top1[0]} is ${((top1[1]/total)*100).toFixed(0)}% of this run's observed spend.`
+    : "No service cost data resolved for this run.";
+  document.getElementById("footService").innerHTML =
+    `Source: <span class="mono">correlations.service_daily_cost__by_service</span> — run ${esc((latestPipelinePayload && latestPipelinePayload.run_id) || "latest")}`;
+}
+function drawDailyChart(){
+  const pipeline = getPipelineChartData();
+  const dayCount = pipeline.daily.length;
+  const hdr = document.getElementById("hdrDaily");
+  if(hdr) hdr.textContent = dayCount ? `Daily spend — last ${dayCount} day${dayCount===1?"":"s"}` : "Daily spend";
+  if(!dayCount){
+    return chartEmptyState("chartDaily","tblDaily","captionDaily","footDaily",
+      `Source: <span class="mono">correlations.service_daily_cost__by_date</span>`);
+  }
+  const data = pipeline.daily;
+  columnChart(document.getElementById("chartDaily"), data,
+              {aria:`Daily spend over the last ${dayCount} day${dayCount===1?"":"s"}`});
+  renderTable(document.getElementById("tblDaily"),
+    [{label:"Date"},{label:"Spend", num:true}],
+    data.map(d => [d[0], money2(d[1])]));
+
+  const values = data.map(d => d[1]);
+  const max = Math.max(...values);
+  const avg = values.reduce((s,v) => s+v, 0) / values.length;
+  document.getElementById("captionDaily").textContent =
+    `${data.length} day(s) resolved for this run. Max daily ${money2(max)}, avg daily ${money2(avg)}.`;
+  document.getElementById("footDaily").textContent =
+    `Max daily ${money2(max)}, avg daily ${money2(avg)} for this run.`;
+}
+function fleetStateCounts(list){
+  const counts = {total:list.length, running:0, stopped:0, other:0};
+  list.forEach(i => {
+    if(i.state === "running") counts.running++;
+    else if(i.state === "stopped") counts.stopped++;
+    else counts.other++;
+  });
+  return counts;
+}
+function fleetStateSummaryText(list, totalAll){
+  if(!list.length) return "No instances match the current filters.";
+  const c = fleetStateCounts(list);
+  let text = `${c.total} instance${c.total>1?"s":""} in scope — ${c.running} running, ${c.stopped} stopped`;
+  if(c.other) text += `, ${c.other} other`;
+  if(totalAll != null && totalAll !== c.total) text += ` (${totalAll} total in the account)`;
+  return text;
+}
+/* The nano <-> micro swap the backend plans actions from, mirrored here so the
+   table can show what each type would be resized to. Keep in step with
+   planner._NANO_MICRO_SWAP: nano and micro swap for each other, running or
+   stopped alike; anything else has no automatic rightsizing suggestion. */
+const NANO_MICRO_SWAP = {nano:"micro", micro:"nano"};
+function rightsizeTargetFor(type){
+  const dot = (type || "").indexOf(".");
+  if(dot < 1) return null;
+  const family = type.slice(0, dot), size = type.slice(dot + 1);
+  const swap = NANO_MICRO_SWAP[size];
+  return swap ? `${family}.${swap}` : null;
+}
+/* Counts by instance type and state, plus what each type would be resized to.
+   This is the table that answers "what have I actually got, what is running,
+   and what would rightsizing change it to" — the same question the nano <->
+   micro recommendations are generated from. */
+function drawInstanceStateTable(){
+  const panel = document.getElementById("instancePanel");
+  const host = document.getElementById("tblInstanceStates");
+  if(!panel || !host) return;
+  // Belongs to the EC2 Rightsizing target: the nano <-> micro swap it
+  // describes is only planned for that target. On any other target (local
+  // files, real AWS) it goes away rather than showing a table nothing acts on.
+  panel.hidden = currentTarget !== "ec2_rightsizing";
+  if(panel.hidden) return;
+  const list = fleetInScope();
+  const sub = document.getElementById("instancePanelSub");
+  const chip = document.getElementById("instancePanelTarget");
+  if(chip) chip.textContent = TARGET_LABEL[currentTarget] || currentTarget;
+
+  if(!list.length){
+    host.innerHTML = `<p class="csub" style="margin:0;padding:10px">`
+      + (fleet.length ? "No instances match the current filters."
+                      : "No instances read yet — the fleet is empty or AWS is unreachable.")
+      + `</p>`;
+    if(sub) sub.textContent = fleet.length
+      ? "No instances match the current filters."
+      : "Waiting on the fleet read.";
+    return;
+  }
+
+  const byType = new Map();
+  list.forEach(i => {
+    if(!byType.has(i.type)) byType.set(i.type, []);
+    byType.get(i.type).push(i);
+  });
+  const rows = [...byType.entries()]
+    .sort((a,b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .map(([type, items]) => {
+      const c = fleetStateCounts(items);
+      const swap = rightsizeTargetFor(type);
+      return [type, String(c.total), String(c.running), String(c.stopped),
+              money2(items.reduce((s,i) => s + instCost(i), 0)),
+              swap ? "→ " + swap : "—"];
+    });
+  const all = fleetStateCounts(list);
+  rows.push(["All types", String(all.total), String(all.running), String(all.stopped),
+             money2(list.reduce((s,i) => s + instCost(i), 0)), ""]);
+  renderTable(host,
+    [{label:"Instance type"},{label:"Instances", num:true},{label:"Running", num:true},
+     {label:"Stopped", num:true},{label:"USD / month", num:true},{label:"Rightsizing suggestion"}],
+    rows);
+  if(sub) sub.textContent = fleetStateSummaryText(list, fleet.length)
+    + ". Nano and micro are suggested for a swap whether running or stopped.";
+}
+function drawFleetChart(){
+  const list = fleetInScope();
+  const capEl = document.getElementById("fleetSummaryCaption");
+  if(capEl) capEl.textContent = fleetStateSummaryText(list, fleet.length);
+  fleetScatter(document.getElementById("chartFleet"), list, {ring:pendingTargets()}, {utilBand, instCost, monthlyOf});
+  renderLegend(document.getElementById("legendFleet"),
+    fleetLegendItems(pendingTargets().size ? "Targeted by a pending request" : null));
+  renderTable(document.getElementById("tblFleet"),
+    [{label:"Instance"},{label:"Type"},{label:"Region"},{label:"Project"},{label:"Env"},
+     {label:"CPU", num:true},{label:"State"},{label:"USD / month", num:true}],
+    list.map(i => [i.name + " (" + i.id + ")", i.type + (i.type!==i.origType ? " ← " + i.origType : ""),
+                   i.region, i.project, i.env, i.cpu + "%", i.state, money2(instCost(i))]));
+}
+function drawRegionChart(){
+  const pipeline = getPipelineChartData();
+  const winLbl = windowLabel(pipeline.daily.length);
+  if(!pipeline.region.length){
+    return chartEmptyState("chartRegion","tblRegion","captionRegion","footRegion",
+      `Source: <span class="mono">correlations.region_cost__by_region</span>`);
+  }
+  const data = pipeline.region;
+  const total = data.reduce((s,d) => s + d[1], 0);
+  hbarChart(document.getElementById("chartRegion"), data,
+            {total, labelW:104, rowH:30, aria:`${winLbl} cost by region`, costLabel:`${winLbl} cost`});
+  renderTable(document.getElementById("tblRegion"),
+    [{label:"Region"},{label:`${winLbl} cost`, num:true},{label:"Share", num:true}],
+    data.map(d => [d[0], money2(d[1]), total ? ((d[1]/total)*100).toFixed(2) + "%" : "0.00%"]));
+
+  const top1 = data[0];
+  document.getElementById("captionRegion").textContent = top1
+    ? `${top1[0]} carries ${((top1[1]/total)*100).toFixed(0)}% of this run's regional spend.`
+    : "No region cost data resolved for this run.";
+  document.getElementById("footRegion").innerHTML =
+    `Source: <span class="mono">correlations.region_cost__by_region</span> — run ${esc((latestPipelinePayload && latestPipelinePayload.run_id) || "latest")}`;
+}
+
+/* ---- chart draws: Cost Forecast / Tag Governance / Anomaly Root Cause agents ---- */
+function drawForecastChart(){
+  const payload = latestPipelinePayload;
+  if(!payload){
+    return chartEmptyState("chartForecast","tblForecast","captionForecast","footForecast",
+      `Source: <span class="mono">analysis.forecast</span>`);
+  }
+  const forecast = (payload.analysis && payload.analysis.forecast) || {};
+  const daily = pipelineDailySeries(payload);
+  if(!daily.length || forecast.days_observed == null){
+    document.getElementById("chartForecast").innerHTML =
+      `<div class="empty">Not enough daily cost history to forecast a trend for this run (needs 6+ days).</div>`;
+    document.getElementById("tblForecast").innerHTML = "";
+    document.getElementById("captionForecast").textContent = "Needs at least 6 days of daily cost history.";
+    document.getElementById("footForecast").innerHTML = `Source: <span class="mono">analysis.forecast</span>`;
+    return;
+  }
+  lineChart(document.getElementById("chartForecast"), daily, {aria:"Daily spend trend feeding the forecast"});
+  renderTable(document.getElementById("tblForecast"),
+    [{label:"Metric"},{label:"Value"}],
+    [
+      ["Days observed", forecast.days_observed],
+      ["Prior period daily avg", money2(forecast.prior_period_daily_avg)],
+      ["Recent period daily avg", money2(forecast.recent_period_daily_avg)],
+      ["Trend", `${forecast.trend_pct > 0 ? "+" : ""}${forecast.trend_pct}%`],
+      ["Projected next 30 days", money2(forecast.projected_30d_total)],
+    ]);
+  const dir = forecast.trend_pct > 0 ? "Up" : forecast.trend_pct < 0 ? "Down" : "Flat";
+  document.getElementById("captionForecast").textContent =
+    `${dir} ${Math.abs(forecast.trend_pct)}% vs. the prior period` +
+    (forecast.flag ? " — material growth, worth investigating." : ".") +
+    ` Projected next 30 days: ${money2(forecast.projected_30d_total)}.`;
+  document.getElementById("footForecast").innerHTML =
+    `Source: <span class="mono">analysis.forecast</span> — run ${esc(payload.run_id || "latest")}`;
+}
+function drawTagGovernanceChart(){
+  const payload = latestPipelinePayload;
+  if(!payload){
+    return chartEmptyState("chartTagGov","tblTagGov","captionTagGov","footTagGov",
+      `Source: <span class="mono">analysis.tag_findings</span>`);
+  }
+  const findings = (payload.analysis && payload.analysis.tag_findings) || [];
+  if(!findings.length){
+    document.getElementById("chartTagGov").innerHTML =
+      `<div class="empty">No tag-governance issues found — every resource in this run carries its cost-allocation tag.</div>`;
+    document.getElementById("tblTagGov").innerHTML = "";
+    document.getElementById("captionTagGov").textContent = "Nothing to flag for this run.";
+    document.getElementById("footTagGov").innerHTML = `Source: <span class="mono">analysis.tag_findings</span>`;
+    return;
+  }
+  const data = findings.map(f => [f.table, f.cost_exposed || 0]);
+  const total = data.reduce((s,d) => s + d[1], 0);
+  const rows = findings.reduce((s,f) => s + (f.rows_affected || 0), 0);
+  hbarChart(document.getElementById("chartTagGov"), data,
+            {total, labelW:140, aria:"Untagged spend by table", costLabel:"Untagged spend"});
+  renderTable(document.getElementById("tblTagGov"),
+    [{label:"Table"},{label:"Missing tag"},{label:"Rows", num:true},{label:"Exposed $", num:true},{label:"Severity"}],
+    findings.map(f => [f.table, f.tag_column, f.rows_affected, money2(f.cost_exposed), f.severity]));
+  document.getElementById("captionTagGov").textContent =
+    `${money2(total)} across ${rows} row(s) cannot be allocated to a project or owner.`;
+  document.getElementById("footTagGov").innerHTML =
+    `Source: <span class="mono">analysis.tag_findings</span> — run ${esc(payload.run_id || "latest")}`;
+}
+function drawRootCauseChart(){
+  const payload = latestPipelinePayload;
+  if(!payload){
+    return chartEmptyState("chartRootCause","tblRootCause","captionRootCause","footRootCause",
+      `Source: <span class="mono">analysis.anomalies[].drivers</span>`);
+  }
+  const anomalies = ((payload.analysis && payload.analysis.anomalies) || [])
+    .filter(a => typeof a.cost === "number" && typeof a.avg === "number");
+  if(!anomalies.length){
+    document.getElementById("chartRootCause").innerHTML =
+      `<div class="empty">No statistically detected cost spikes for this run.</div>`;
+    document.getElementById("tblRootCause").innerHTML = "";
+    document.getElementById("captionRootCause").textContent = "No anomalies detected for this run.";
+    document.getElementById("footRootCause").innerHTML = `Source: <span class="mono">analysis.anomalies[].drivers</span>`;
+    return;
+  }
+  const top = [...anomalies].sort((a,b) => (b.cost - b.avg) - (a.cost - a.avg)).slice(0,8);
+  const data = top.map(a => [
+    `${a.table || ""}${a.dimension ? " · " + a.dimension : ""} (${a.date || ""})`,
+    a.cost
+  ]);
+  hbarChart(document.getElementById("chartRootCause"), data,
+            {labelW:200, aria:"Top cost anomalies", costLabel:"Spike-day cost"});
+  renderTable(document.getElementById("tblRootCause"),
+    [{label:"Anomaly"},{label:"Spike cost", num:true},{label:"Normal avg", num:true},{label:"Likely driver"}],
+    top.map(a => [
+      a.finding || "", money2(a.cost), money2(a.avg),
+      (a.drivers && a.drivers.length) ? `${a.drivers[0].value} (${a.drivers[0].dimension}, +${a.drivers[0].pct_above_own_avg}%)` : "—"
+    ]));
+  const withDrivers = top.find(a => a.drivers && a.drivers.length);
+  document.getElementById("captionRootCause").textContent = withDrivers
+    ? `Largest explained spike: ${withDrivers.finding} — coincided with ${withDrivers.drivers[0].value} (${withDrivers.drivers[0].dimension}, +${withDrivers.drivers[0].pct_above_own_avg}%).`
+    : `${top.length} spike(s) detected; no single dimension clearly explained any of them.`;
+  document.getElementById("footRootCause").innerHTML =
+    `Source: <span class="mono">analysis.anomalies[].drivers</span> — run ${esc(payload.run_id || "latest")}`;
+}
+
+/* =========================================================================
+   4. RENDER — RE team dashboard
+   ========================================================================= */
+function renderRe(){
+  const q = queue();
+  const atStake = q.reduce((s,r) => s + r.savings, 0);
+  const approved = recs.filter(r => r.status === ST.APPLIED);
+  const declined = recs.filter(r => r.status === ST.DECLINED);
+  const fc = fleetCost();
+  const after = fc - atStake;
+
+  document.getElementById("reHero").textContent = money(atStake);
+  document.getElementById("reHeroSub").textContent = q.length
+    ? `Monthly, across ${q.length} request${q.length>1?"s":""} waiting on a decision`
+    : "The queue is empty.";
+
+  const pct = fc > 0 ? Math.min(100, (atStake/fc)*100) : 0;
+  document.getElementById("reMeter").style.width = pct.toFixed(1) + "%";
+  document.getElementById("reMeterLbl").textContent = q.length
+    ? `${pct.toFixed(1)}% of the current ${money(fc)}/mo fleet cost`
+    : "Nothing pending against the fleet cost";
+
+  document.getElementById("rqCount").textContent = q.length;
+  document.getElementById("rqCountSub").textContent = q.length
+    ? "Oldest raised " + q[0].raisedAt : "Nothing to review";
+
+  const prodCount = q.filter(r => (r.targets||[]).some(t => {
+    const i = fleet.find(x => x.id === t); return i && i.env === "prod";
+  })).length;
+  document.getElementById("rqProd").textContent = prodCount;
+
+  document.getElementById("rqApproved").textContent = approved.length;
+  document.getElementById("rqApprovedSub").textContent = approved.length
+    ? money(approved.reduce((s,r)=>s+r.savings,0)) + "/mo now live"
+    : "Nothing approved yet";
+
+  document.getElementById("rqFleet").textContent = money(after);
+  document.getElementById("rqFleetSub").textContent = q.length
+    ? `Down from ${money(fc)} if the whole queue is approved`
+    : `Current fleet cost, nothing pending`;
+
+  const capElRe = document.getElementById("fleetSummaryCaptionRe");
+  if(capElRe) capElRe.textContent = fleetStateSummaryText(fleetInScope(), fleet.length);
+  fleetScatter(document.getElementById("chartReFleet"), fleetInScope(),
+               {ring:pendingTargets(), height:290}, {utilBand, instCost, monthlyOf});
+  renderLegend(document.getElementById("legendReFleet"),
+    fleetLegendItems(pendingTargets().size ? "Targeted by a pending request" : null));
+  renderTable(document.getElementById("tblReFleet"),
+    [{label:"Instance"},{label:"Type"},{label:"Region"},{label:"Env"},
+     {label:"CPU", num:true},{label:"State"},{label:"USD / month", num:true},{label:"In queue"}],
+    fleetInScope().map(i => [i.name + " (" + i.id + ")", i.type, i.region, i.env,
+      i.cpu + "%", i.state, money2(instCost(i)),
+      pendingTargets().has(i.id) ? "yes" : "no"]));
+
+  document.getElementById("queueList").innerHTML = q.length
+    ? q.map(queueCard).join("")
+    : `<div class="empty">No requests waiting. Accept a recommendation on the employee dashboard and it will appear here.</div>`;
+
+  const staged = stagedQueue();
+  document.getElementById("stagedList").innerHTML = staged.length
+    ? staged.map(stagedCard).join("")
+    : `<div class="empty">Nothing staged yet. Stage every request in the queue above, then commit.</div>`;
+  renderCommitPanel();
+
+  renderLog();
+  renderFlowRail();
+  renderRealAwsWarning("reRealAwsWarn");
+
+  const badge = document.getElementById("queueBadge");
+  badge.textContent = q.length;
+  badge.hidden = q.length === 0;
+}
+
+function renderCommitPanel(){
+  const r = commitReadiness();
+  const stats = [
+    [r.undecided, "Still awaiting a decision"],
+    [r.stagedApprove.length, "Staged to approve"],
+    [r.stagedDecline.length, "Staged to decline"],
+    [money(r.estimatedSavings), "Would save / month"],
+  ];
+  const msg = r.undecided > 0
+    ? `${r.undecided} request${r.undecided>1?"s":""} still need${r.undecided===1?"s":""} a decision before you can commit.`
+    : r.stagedApprove.length + r.stagedDecline.length === 0
+      ? "Nothing staged yet."
+      : "Every request is decided — ready to commit.";
+  document.getElementById("commitPanel").innerHTML = `
+    <div class="cp-stats">${stats.map(([v,l]) => `
+      <div class="cp-stat"><span class="cv">${v}</span><span class="cn">${esc(l)}</span></div>`).join("")}</div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <span class="cp-msg">${esc(msg)}</span>
+      <button class="btn btn-primary" id="commitBtn" type="button" ${r.ready ? "" : "disabled"}>
+        Commit ${r.stagedApprove.length + r.stagedDecline.length || ""} change${(r.stagedApprove.length + r.stagedDecline.length) === 1 ? "" : "s"}
+      </button>
+    </div>`;
+  const btn = document.getElementById("commitBtn");
+  if(btn) btn.addEventListener("click", () => commitQueue(btn));
+}
+
+function renderRealAwsWarning(hostId){
+  const host = document.getElementById(hostId);
+  if(!host) return;
+  if(currentTarget !== "real_aws"){ host.hidden = true; host.innerHTML = ""; return; }
+  host.hidden = false;
+  host.innerHTML = `<div class="outcome no" style="margin:0 0 14px">${ICON.alert}
+    <div><span class="oh">Target: Real AWS.</span>
+    <span class="ob">Reads come from your live AWS account. Writes still only happen through the RE team's staged batch commit below — never directly from this screen.</span></div></div>`;
+}
+
+function queueCard(r){
+  const targets = r.targets.map(id => fleet.find(i => i.id === id)).filter(Boolean);
+  const touchesProd = targets.some(i => i.env === "prod");
+  const riskText = r.riskReason || {
+    high:"Production resource behind live traffic. Confirm a maintenance window and that the second node can carry the load alone.",
+    medium:"Brief downtime on a production-tagged resource. Low traffic impact expected, but confirm the change window.",
+    low:"Development-tagged or non-serving resource. No customer-facing impact expected."
+  }[r.risk];
+  const needsOverride = r.risk === "high";
+
+  const resourceRows = targets.length
+    ? targets.map(i => `<dt>${esc(i.id)}</dt><dd>${esc(i.name)} · ${esc(i.type)} · ${esc(i.region)} · ${esc(i.env)} · ${i.cpu}% CPU · ${money2(instCost(i))}/mo</dd>`).join("")
+    : `<dt>Resources</dt><dd>Account-level change — no individual instance is modified.</dd>`;
+
+  const citationRows = (r.citations || []).length
+    ? `<div class="pt" style="margin-top:12px">Supporting data</div>
+       <dl class="kv">${r.citations.map(c =>
+         `<dt>${esc(c.table)}</dt><dd>${esc(c.column)} = "${esc(c.value)}" · ${money2(c.cost)}/mo</dd>`
+       ).join("")}</dl>`
+    : "";
+
+  return `
+  <article class="queue-item" id="q_${r.id}">
+    <span class="rail"></span>
+    <div class="requester">
+      <div class="av">${esc(EMPLOYEE.initials)}</div>
+      <div>
+        <div class="rq"><b>${esc(EMPLOYEE.name)}</b> raised this for approval</div>
+        <div class="when">${esc(r.raisedAt)} · request <span class="mono">${esc(r.id)}</span></div>
+      </div>
+    </div>
+
+    <div class="rec-top">
+      <div style="min-width:0;flex:1">
+        <div class="chips">
+          <span class="chip impact-${r.impact}">${IMPACT_ICON[r.impact]}${r.impact} impact</span>
+          <span class="chip">${r.src === "pipeline" ? "pipeline recommendation" : "live fleet scan"}</span>
+          <span class="chip">operation: ${esc(r.op)}</span>
+          ${touchesProd ? `<span class="chip impact-high">${ICON.alert}touches production</span>` : ""}
+        </div>
+        <h4>${esc(r.title)}</h4>
+        <p class="rationale">${esc(r.rationale)}</p>
+      </div>
+      <div class="save">
+        ${r.savings > 0
+          ? `<div class="sv">${money2(r.savings)}</div><div class="sl">saved / month</div>`
+          : `<div class="sv" style="font-size:16px;color:var(--text-secondary)">—</div><div class="sl">governance change</div>`}
+      </div>
+    </div>
+
+    <div class="plan">
+      <div class="pt">Resources affected</div>
+      <dl class="kv">${resourceRows}</dl>
+      ${r.calls.length ? `<div class="pt" style="margin-top:12px">Calls that will run on approval</div>
+        <div class="calls">${r.calls.map(c => `<div class="call">${esc(c)}</div>`).join("")}</div>` : ""}
+      <div class="pt" style="margin-top:12px">Effect</div>
+      <dl class="kv"><dt>Result</dt><dd>${esc(r.effect)}</dd>
+      ${r.savings > 0 ? `<dt>Fleet cost</dt><dd>${money2(fleetCost())}/mo → ${money2(fleetCost() - r.savings)}/mo</dd>` : ""}</dl>
+      ${citationRows}
+    </div>
+
+    <div class="risk-note risk-${r.risk}">${ICON.shield}
+      <div><b>Blast radius: ${esc(r.risk)}.</b> ${esc(riskText)}</div></div>
+
+    ${needsOverride ? `
+    <label class="risk-override" style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text-secondary);margin:4px 0 10px">
+      <input type="checkbox" id="ovr_${r.id}" data-overridebox="${r.id}" style="margin-top:2px" />
+      I understand the blast radius and want to proceed anyway.
+    </label>` : ""}
+
+    <div class="actions">
+      <button class="btn btn-approve" data-stageapprove="${r.id}" type="button"
+        ${needsOverride ? `disabled title="Check the override box above to enable approval of this high-risk change."` : ""}>Stage: Approve</button>
+      <button class="btn btn-danger" data-declinetoggle="${r.id}" type="button">Stage: Decline</button>
+      <span style="font-size:11.5px;color:var(--text-muted)">Staging never touches AWS — it only records your decision until the batch is committed below.</span>
+    </div>
+
+    <div class="decline-box" id="dec_${r.id}">
+      <div class="reasons">
+        ${["Production change needs a maintenance window","Capacity headroom required for peak",
+           "Owner sign-off missing","Superseded by a planned migration","Insufficient utilization evidence"]
+          .map(t => `<button class="reason-pill" data-reasonfor="${r.id}" type="button">${esc(t)}</button>`).join("")}
+      </div>
+      <textarea id="rsn_${r.id}" placeholder="Reason sent back to the requester (required)"></textarea>
+      <div class="actions">
+        <button class="btn btn-danger" data-declineconfirm="${r.id}" type="button">Confirm staged decline</button>
+        <button class="btn btn-quiet" data-declinecancel="${r.id}" type="button">Cancel</button>
+      </div>
+    </div>
+  </article>`;
+}
+
+/* Staged (approve or decline) but not yet committed — shown in its own list
+   between the queue and the activity log, with an Unstage escape hatch. */
+function stagedCard(r){
+  const isApprove = r.status === ST.STAGED_APPROVE;
+  return `
+  <article class="rec staged-card ${isApprove ? "approve" : "decline"}">
+    <span class="rail" style="background:${isApprove ? "var(--accent)" : "var(--critical)"}"></span>
+    <div class="rec-top">
+      <div style="min-width:0;flex:1">
+        <div class="chips">
+          <span class="chip st-${r.status}">${esc(ST_LABEL[r.status])}</span>
+          <span class="chip">operation: ${esc(r.op || "—")}</span>
+          <span class="chip mono">${esc(r.id)}</span>
+        </div>
+        <h4>${esc(r.title)}</h4>
+        ${isApprove
+          ? `<p class="rationale">Will run on commit: ${esc((r.calls||[]).join("; ") || "acknowledge only")}</p>`
+          : `<p class="rationale">Reason: ${esc(r.reason || "no reason recorded")}</p>`}
+      </div>
+      <div class="save">${r.savings > 0
+        ? `<div class="sv">${money2(r.savings)}</div><div class="sl">would save / month</div>`
+        : `<div class="sv" style="font-size:16px;color:var(--text-secondary)">—</div><div class="sl">no direct saving</div>`}</div>
+    </div>
+    <p class="rationale" style="margin-top:-4px">Staged by ${esc(r.stagedBy || "the RE team")} · ${esc(r.stagedAt || "")}</p>
+    <div class="actions">
+      <button class="btn btn-quiet" data-unstage="${r.id}" type="button">Unstage — back to the queue</button>
+    </div>
+  </article>`;
+}
+
+/* Folded in from approval_dashboard.html: an activity feed (real decision
+   log data) instead of a plain table, and a 4-step approval-flow rail that
+   highlights once any recommendation has reached that stage. */
+function renderLog(){
+  const host = document.getElementById("logBody");
+  if(!log.length){
+    host.innerHTML = `<div class="empty" style="border:0;background:transparent">No decisions recorded yet.</div>`;
+    return;
+  }
+  host.innerHTML = log.map(e => `
+    <div class="feed-item">
+      <span class="feed-dot ${e.kind}"></span>
+      <div class="feed-body">
+        <div class="feed-msg"><b>${esc(e.decision)}</b> — ${esc(e.title.length > 90 ? e.title.slice(0,89) + "…" : e.title)}</div>
+        <div class="feed-meta">
+          <span class="mono">${esc(e.id)}</span>
+          <span>${esc(e.at)}</span>
+          ${e.savings > 0 ? `<span>${money2(e.savings)}/mo</span>` : ""}
+          ${e.note ? `<span>${esc(e.note)}</span>` : ""}
+        </div>
+      </div>
+    </div>`).join("");
+}
+function renderFlowRail(){
+  const everRaised = recs.some(r => [ST.PENDING_RE, ST.APPLIED, ST.DECLINED].includes(r.status));
+  const everDecided = recs.some(r => [ST.APPLIED, ST.DECLINED].includes(r.status));
+  const everApplied = recs.some(r => r.status === ST.APPLIED);
+  const steps = [
+    ["AI generates a recommendation", recs.length > 0],
+    ["Employee raises it for approval", everRaised],
+    ["RE team verifies the request", everDecided],
+    ["Approved change applied to AWS", everApplied],
+  ];
+  document.getElementById("flowRail").innerHTML = steps.map(([label,on],i) => `
+    <div class="flow-step${on ? " on" : ""}"><span class="fs-n">${i+1}</span>${esc(label)}</div>`).join("");
+}
+
+/* =========================================================================
+   5. WORKFLOW TRANSITIONS
+   ========================================================================= */
+async function runBackendAction(path, body, okTitle, okKind, btn){
+  setBusy(btn);
+  try{
+    const data = await apiPost(path, body);
+    if(data.ok === false) toast("no", "Action failed", data.message || "The backend rejected this change.");
+    else toast(okKind || "ok", okTitle, data.message || "");
+  }catch(e){
+    toast("no", "Request failed", e.message);
+  }
+  await loadState();
+  renderAll();
+  clearBusy(btn);
+}
+
+function employeeAccept(id, btn){
+  const r = byId(id); if(!r || r.status !== ST.OPEN) return;
+  if(!liveMode) return localAccept(id);
+  runBackendAction("/api/actions/raise", {id, raised_by: EMPLOYEE.name},
+    "Request raised", "wait", btn);
+}
+function employeeReject(id, btn){
+  const r = byId(id); if(!r || r.status !== ST.OPEN) return;
+  if(!liveMode) return localReject(id);
+  runBackendAction("/api/apply", {id, decision:"dismiss"},
+    "Recommendation rejected", "no", btn);
+}
+function employeeAck(id, btn){
+  const r = byId(id); if(!r || r.status !== ST.OPEN) return;
+  if(!liveMode) return localAck(id);
+  runBackendAction("/api/apply", {id, decision:"apply"},
+    "Acknowledged", "ok", btn);
+}
+function employeeWithdraw(id, btn){
+  const r = byId(id); if(!r || r.status !== ST.PENDING_RE) return;
+  if(!liveMode) return localWithdraw(id);
+  runBackendAction("/api/actions/withdraw", {id, actor: EMPLOYEE.name},
+    "Request withdrawn", "wait", btn);
+}
+function employeeReopen(id, btn){
+  const r = byId(id); if(!r) return;
+  if(!liveMode) return localReopen(id);
+  runBackendAction("/api/actions/reopen", {id, actor: EMPLOYEE.name},
+    "Reopened", "wait", btn);
+}
+function reStageApprove(id, btn){
+  const r = byId(id); if(!r || r.status !== ST.PENDING_RE) return;
+  const override = r.risk === "high" ? !!document.getElementById("ovr_" + id)?.checked : false;
+  if(r.risk === "high" && !override){
+    toast("no","Override required","Check \"I understand the blast radius\" before staging a high-risk change.");
+    return;
+  }
+  if(!liveMode) return localStageApprove(id);
+  runBackendAction("/api/actions/stage", {id, decision:"approve", staged_by: RE_USER.name, override},
+    "Staged to approve", "wait", btn);
+}
+function reStageDecline(id, reason, btn){
+  const r = byId(id); if(!r || r.status !== ST.PENDING_RE) return;
+  if(!liveMode) return localStageDecline(id, reason);
+  runBackendAction("/api/actions/stage", {id, decision:"decline", staged_by: RE_USER.name, reason},
+    "Staged to decline", "wait", btn);
+}
+function reUnstage(id, btn){
+  const r = byId(id); if(!r || (r.status !== ST.STAGED_APPROVE && r.status !== ST.STAGED_DECLINE)) return;
+  if(!liveMode) return localUnstage(id);
+  runBackendAction("/api/actions/unstage", {id, actor: RE_USER.name},
+    "Back in the queue", "wait", btn);
+}
+async function commitQueue(btn){
+  const r = commitReadiness();
+  if(!r.ready) return;
+  if(!liveMode) return localCommitBatch();
+  setBusy(btn);
+  try{
+    const data = await apiPost("/api/actions/commit", {decided_by: RE_USER.name});
+    if(data.ok === false){
+      toast("no","Commit failed", data.error || data.message || "The backend rejected the commit.");
+    } else {
+      toast("ok","Batch committed",
+        `${data.applied} applied, ${data.declined} declined, ${data.failed} failed. ${data.failed ? "Failed items are left staged for retry." : ""}`);
+      renderCommitResult(data);
+    }
+  }catch(e){
+    toast("no","Commit failed", e.message);
+  }
+  await loadState(true);
+  renderAll();
+  clearBusy(btn);
+}
+async function rollbackBatch(batchId, btn){
+  if(!liveMode){
+    toast("no","Not available in demo mode","Rollback needs the live backend — connect it or run the pipeline first.");
+    return;
+  }
+  setBusy(btn);
+  try{
+    const data = await apiPost("/api/actions/rollback", {batch_id: batchId, actor: RE_USER.name});
+    if(data.ok === false) toast("no","Rollback failed", data.error || data.message || "");
+    else toast("ok","Rolled back", `Batch ${batchId}: ${(data.results||[]).filter(r=>r.ok).length} of ${(data.results||[]).length} reversed.`);
+  }catch(e){
+    toast("no","Rollback failed", e.message);
+  }
+  await loadState(true);
+  renderAll();
+  clearBusy(btn);
+}
+function renderCommitResult(data){
+  const host = document.getElementById("commitResult");
+  if(!host) return;
+  const canRollback = liveMode && data.rollback_available && data.applied > 0;
+  host.innerHTML = `<div class="outcome ${data.failed ? "wait" : "ok"}" style="margin-bottom:14px">
+    ${data.failed ? ICON.clock : ICON.check}
+    <div><span class="oh">Batch ${esc(data.batch_id)} committed.</span>
+    <span class="ob">${data.applied} applied, ${data.declined} declined, ${data.failed} failed (left staged for retry).</span>
+    ${canRollback ? `<div class="actions" style="margin-top:8px">
+      <button class="btn btn-quiet" data-rollback="${esc(data.batch_id)}" type="button">Roll back this batch</button>
+    </div>` : ""}
+    </div></div>`;
+}
+
+/* ---- offline fallback: fully-client-side simulation ---- */
+function localAccept(id){
+  const r = byId(id); if(!r || r.status !== ST.OPEN) return;
+  r.status = ST.PENDING_RE;
+  r.raisedAt = tick(3);
+  log.unshift({at:r.raisedAt, id:r.id, title:r.title, decision:"Raised for approval",
+               kind:"wait", savings:r.savings, note:"Sent to the RE team queue"});
+  toast("wait","Request raised", "Sent to the RE team. Nothing has changed in AWS yet.");
+  renderAll();
+}
+function localReject(id){
+  const r = byId(id); if(!r || r.status !== ST.OPEN) return;
+  r.status = ST.DISMISSED; r.decidedAt = tick(1);
+  toast("no","Recommendation rejected", "Closed on your side. It was never sent to the RE team.");
+  renderAll();
+}
+function localAck(id){
+  const r = byId(id); if(!r || r.status !== ST.OPEN) return;
+  r.status = ST.ACK; r.decidedAt = tick(1);
+  toast("ok","Acknowledged", "Tracked for the next pipeline run.");
+  renderAll();
+}
+function localWithdraw(id){
+  const r = byId(id); if(!r || r.status !== ST.PENDING_RE) return;
+  r.status = ST.OPEN; r.raisedAt = null;
+  log.unshift({at:tick(1), id:r.id, title:r.title, decision:"Withdrawn by requester",
+               kind:"no", savings:r.savings, note:"Removed from the queue before a decision"});
+  toast("wait","Request withdrawn", "Removed from the RE team queue.");
+  renderAll();
+}
+function localReopen(id){
+  const r = byId(id); if(!r) return;
+  r.status = ST.OPEN; r.reason = null; r.decidedAt = null; r.raisedAt = null;
+  toast("wait","Reopened", "Back in your open list. Accept it again to raise a fresh request.");
+  renderAll();
+}
+function localStageApprove(id){
+  const r = byId(id); if(!r || r.status !== ST.PENDING_RE) return;
+  r.status = ST.STAGED_APPROVE; r.stagedBy = RE_USER.name; r.stagedAt = tick(2);
+  log.unshift({at:r.stagedAt, id:r.id, title:r.title, decision:"Staged to approve by " + RE_USER.name,
+               kind:"wait", savings:r.savings, note:"Not applied yet — awaiting the batch commit."});
+  toast("wait","Staged to approve", "Nothing has changed in AWS yet — commit the batch once the queue is empty.");
+  renderAll();
+}
+function localStageDecline(id, reason){
+  const r = byId(id); if(!r || r.status !== ST.PENDING_RE) return;
+  r.status = ST.STAGED_DECLINE; r.reason = reason; r.stagedBy = RE_USER.name; r.stagedAt = tick(2);
+  log.unshift({at:r.stagedAt, id:r.id, title:r.title, decision:"Staged to decline by " + RE_USER.name,
+               kind:"wait", savings:r.savings, note:"Staged. Reason: " + reason});
+  toast("wait","Staged to decline", "Not final until the batch is committed.");
+  renderAll();
+}
+function localUnstage(id){
+  const r = byId(id); if(!r || (r.status !== ST.STAGED_APPROVE && r.status !== ST.STAGED_DECLINE)) return;
+  r.status = ST.PENDING_RE; r.stagedBy = null; r.stagedAt = null; r.reason = null;
+  log.unshift({at:tick(1), id:r.id, title:r.title, decision:"Unstaged", kind:"wait",
+               savings:r.savings, note:"Back in the queue, awaiting a decision."});
+  toast("wait","Unstaged", "Back in the approval queue.");
+  renderAll();
+}
+function localCommitBatch(){
+  const staged = stagedQueue();
+  if(!staged.length) return;
+  let applied = 0, declined = 0;
+  const batchId = "batch_local_" + Date.now().toString(36);
+
+  staged.forEach(r => {
+    if(r.status === ST.STAGED_DECLINE){
+      r.status = ST.DECLINED; r.decidedAt = tick(2); r.commitBatchId = batchId;
+      log.unshift({at:r.decidedAt, id:r.id, title:r.title,
+                   decision:"Declined by " + RE_USER.name, kind:"no",
+                   savings:r.savings, note:"Not applied. Reason: " + declineReasonOf(r)});
+      declined++;
+      return;
+    }
+    const before = fleetCost();
+    const notes = [];
+    (r.targets||[]).forEach(tid => {
+      const inst = fleet.find(i => i.id === tid); if(!inst) return;
+      if(r.op === "terminate"){ inst.state = "terminated"; notes.push(`terminated ${inst.id} (${inst.type})`); }
+      else if(r.op === "resize"){
+        const next = smallerType(inst.type);
+        if(next){ const was = inst.type; inst.type = next; notes.push(`resized ${inst.id} ${was} → ${next}`); }
+        else notes.push(`${inst.id} already smallest in family`);
+      } else if(r.op === "stop"){ inst.state = "stopped"; notes.push(`stopped ${inst.id}`); }
+      else if(r.op === "schedule"){ inst.state = "scheduled"; inst.schedule = "weekday-08-20"; notes.push(`${inst.id} scheduled weekday-08-20 (stopped now)`); }
+      else if(r.op === "tag"){ inst.tagged = true; notes.push(`tagged ${inst.id} CostOptimized=true`); }
+    });
+    if(r.op === "budget") notes.push("created budget auto-from-recommendation ($100.00, service:EC2)");
+    if(!(r.targets||[]).length && r.op === "tag")
+      notes.push(`no matching live instances for ${r.match_column}='${r.match_value}' — acknowledged`);
+
+    const after = fleetCost();
+    const delta = before - after;
+    r.status = ST.APPLIED; r.decidedAt = tick(4); r.commitBatchId = batchId;
+    r.resultNote = `${notes.join("; ")}. Fleet now ${money2(after)}/mo` + (delta > 0 ? ` (down ${money2(delta)}/mo).` : ".");
+    log.unshift({at:r.decidedAt, id:r.id, title:r.title,
+                 decision:"Approved by " + RE_USER.name, kind:"ok",
+                 savings:delta > 0 ? delta : r.savings, note:r.resultNote});
+    applied++;
+  });
+
+  toast("ok","Batch committed", `${applied} applied, ${declined} declined.`);
+  renderCommitResult({batch_id:batchId, applied, declined, failed:0, rollback_available:false});
+  renderAll();
+}
+function declineReasonOf(r){ return r.reason || "no reason recorded"; }
+
+/* =========================================================================
+   6. WIRING
+   ========================================================================= */
+function setRole(next){
+  role = next;
+  document.getElementById("roleEmp").setAttribute("aria-selected", role === "emp");
+  document.getElementById("roleRe").setAttribute("aria-selected", role === "re");
+  document.getElementById("viewEmp").hidden = role !== "emp";
+  document.getElementById("viewRe").hidden  = role !== "re";
+  const u = role === "emp" ? EMPLOYEE : RE_USER;
+  document.getElementById("whoName").textContent = u.name;
+  document.getElementById("whoRole").textContent = u.role;
+  const av = document.getElementById("whoAvatar");
+  av.textContent = u.initials;
+  av.classList.toggle("re", role === "re");
+  if(window.PlatformChat) window.PlatformChat.setContext(role);
+  renderAll();
+}
+
+function renderAll(){
+  if(role === "emp") renderEmployee(); else renderRe();
+  // Lives outside both role views and does not wait on a pipeline run, so it
+  // is drawn here rather than from either role's render.
+  drawInstanceStateTable();
+  const q = queue().length;
+  const badge = document.getElementById("queueBadge");
+  badge.textContent = q; badge.hidden = q === 0;
+}
+
+document.getElementById("targetSelect").addEventListener("change", e => {
+  currentTarget = e.target.value;
+  localStorage.setItem("awsTarget", currentTarget);
+  applyTargetToUI();
+  renderAll();
+  toast("wait", "Target set to " + (TARGET_LABEL[currentTarget] || currentTarget),
+    "Takes effect on the next \"Start run\".");
+});
+
+document.getElementById("roleEmp").addEventListener("click", () => setRole("emp"));
+document.getElementById("roleRe").addEventListener("click",  () => setRole("re"));
+document.getElementById("resetBtn").addEventListener("click", async (ev) => {
+  const btn = ev.currentTarget;
+  if(liveMode){
+    setBusy(btn);
+    toast("wait","Refreshing","Reloading actions, decisions and fleet from the backend.");
+    await loadState(true);
+    renderAll();
+    clearBusy(btn);
+    return;
+  }
+  resetState();
+  ["fEnv","fRegion","fProject"].forEach(id => document.getElementById(id).value = "all");
+  filters.env = filters.region = filters.project = "all";
+  setRole("emp");
+  toast("wait","Prototype reset", "Fleet, recommendations and the decision log are back to their seed state.");
+});
+
+// TEST-ONLY — remove this block along with the button once testing is done.
+document.getElementById("resetTestDataBtn").addEventListener("click", async (ev) => {
+  const btn = ev.currentTarget;
+  setBusy(btn);
+  try{
+    const data = await apiPost("/api/test/reset", {});
+    toast("wait", "Test data reset", data.message || "Every recommendation and decision was cleared.");
+  }catch(e){
+    toast("no", "Reset failed", e.message);
+  }
+  // The pipeline-run result (charts, KPIs, report) lives only in this tab's
+  // memory — the backend reset above doesn't know about it, so clear it here.
+  latestPipelinePayload = null;
+  const runReport = document.getElementById("runReport");
+  if(runReport){ runReport.hidden = true; runReport.innerHTML = ""; }
+  const provCharts = document.getElementById("provCharts");
+  if(provCharts){
+    provCharts.innerHTML = "<b>Charts above</b> are empty until you run the pipeline with " +
+      "\"Run a new analysis\" above — nothing shown is fabricated or reference data.";
+  }
+  await loadState(true);
+  renderAll();
+  clearBusy(btn);
+});
+
+document.getElementById("fEnv").addEventListener("change", e => { filters.env = e.target.value; renderAll(); });
+document.getElementById("fRegion").addEventListener("change", e => { filters.region = e.target.value; renderAll(); });
+document.getElementById("fProject").addEventListener("change", e => { filters.project = e.target.value; renderAll(); });
+
+document.addEventListener("click", ev => {
+  const t = ev.target.closest("button");
+  if(!t) return;
+
+  if(t.dataset.f){ recFilter = t.dataset.f; renderEmployee(); return; }
+  if(t.dataset.table !== undefined){
+    const host = document.getElementById(t.dataset.table);
+    const shown = !host.hidden;
+    host.hidden = shown;
+    t.setAttribute("aria-pressed", String(!shown));
+    t.textContent = shown ? "Table" : "Hide table";
+    return;
+  }
+  if(t.dataset.accept)   return employeeAccept(t.dataset.accept, t);
+  if(t.dataset.reject)   return employeeReject(t.dataset.reject, t);
+  if(t.dataset.ack)      return employeeAck(t.dataset.ack, t);
+  if(t.dataset.withdraw) return employeeWithdraw(t.dataset.withdraw, t);
+  if(t.dataset.reopen)   return employeeReopen(t.dataset.reopen, t);
+  if(t.dataset.stageapprove) return reStageApprove(t.dataset.stageapprove, t);
+  if(t.dataset.unstage)  return reUnstage(t.dataset.unstage, t);
+  if(t.dataset.rollback) return rollbackBatch(t.dataset.rollback, t);
+
+  if(t.dataset.declinetoggle){
+    document.getElementById("dec_" + t.dataset.declinetoggle).classList.add("show");
+    document.getElementById("rsn_" + t.dataset.declinetoggle).focus();
+    return;
+  }
+  if(t.dataset.declinecancel){
+    document.getElementById("dec_" + t.dataset.declinecancel).classList.remove("show");
+    return;
+  }
+  if(t.dataset.reasonfor){
+    const box = document.getElementById("rsn_" + t.dataset.reasonfor);
+    box.value = t.textContent.trim() + ".";
+    box.focus();
+    return;
+  }
+  if(t.dataset.declineconfirm){
+    const id = t.dataset.declineconfirm;
+    const box = document.getElementById("rsn_" + id);
+    const reason = box.value.trim();
+    if(!reason){
+      box.focus();
+      box.style.borderColor = "var(--critical)";
+      toast("no","Reason required","The requester needs to know why the change was not applied.");
+      return;
+    }
+    reStageDecline(id, reason, t);
+    return;
+  }
+});
+
+document.addEventListener("change", ev => {
+  const box = ev.target.closest("[data-overridebox]");
+  if(!box) return;
+  const id = box.dataset.overridebox;
+  const btn = document.querySelector(`[data-stageapprove="${id}"]`);
+  if(btn) btn.disabled = !box.checked;
+});
+
+let rt;
+addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderAll, 140); });
+
+emptyState();
+applyTargetToUI();
+setRole("emp");
+Promise.all([loadState(), syncTargetFromServer()]).then(() => {
+  document.getElementById("resetBtn").textContent = liveMode ? "Refresh" : "Reset prototype";
+  renderAll();
+});
+</script>
+</body>
+</html>
