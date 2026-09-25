@@ -32,13 +32,15 @@ _STATIC_REASONS = {
 }
 
 
-def _matched_instances(action: Action, cfg: "PipelineConfig") -> list[dict]:
+def _matched_instances(action: Action, cfg: "PipelineConfig", executor=None) -> list[dict]:
     if action.backend != "aws" or not action.executable:
         return []
     try:
-        from .executor import AWSExecutor
+        if executor is None:
+            from .executor import AWSExecutor
 
-        return AWSExecutor(cfg).matched_instances(action)
+            executor = AWSExecutor(cfg)
+        return executor.matched_instances(action)
     except Exception as exc:  # pragma: no cover - defensive only
         log.warning("Could not resolve instances for risk check on %s (%s)", action.id, exc)
         return []
@@ -58,14 +60,16 @@ def _deterministic_level(action: Action, instances: list[dict]) -> str:
     return "low"
 
 
-def assess_risk(action: Action, cfg: "PipelineConfig") -> None:
+def assess_risk(action: Action, cfg: "PipelineConfig", executor=None) -> None:
     """Set ``action.risk_level``/``action.risk_reason`` in place.
 
     Never raises: a guardrail that can crash the run is worse than one that's
     merely conservative. Callers should invoke this after the action's
     ``op``/``targets`` preview has been filled in (see ``planner._attach_preview``).
+    Pass the same ``executor`` used for the preview to reuse its one fleet
+    read instead of paying for another per action.
     """
-    instances = _matched_instances(action, cfg)
+    instances = _matched_instances(action, cfg, executor)
     level = _deterministic_level(action, instances)
     action.risk_level = level
     action.risk_reason = _STATIC_REASONS[level]

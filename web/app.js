@@ -62,9 +62,9 @@ function startRun(query) {
 
   const sourceSel = $("#source");
   const pick = sourceSel ? sourceSel.value : "local_csv";
-  const useMock = pick === "mock_aws";
-  const sources = useMock ? ["cost_explorer", "cloudwatch"] : ["local_csv"];
-  const backend = useMock ? "aws" : "csv";
+  const useRealAws = pick === "real_aws";
+  const sources = useRealAws ? ["cost_explorer", "cloudwatch"] : ["local_csv"];
+  const backend = useRealAws ? "aws" : "csv";
 
   fetch("/api/run", {
     method: "POST",
@@ -209,7 +209,7 @@ function renderFinal(slot, result) {
   const isAws = (result?.action_backend || "") === "aws";
   const fleetHtml = isAws
     ? `<div class="rr-section" id="fleetSection">
-         <h4>Live AWS fleet (mock) — updates as you apply</h4>
+         <h4>Live AWS fleet — updates as you apply</h4>
          <div class="fleet-wrap">Loading…</div>
        </div>`
     : "";
@@ -306,7 +306,7 @@ function wireFollowUp(slot) {
   });
 }
 
-/* ---------- Live mock-AWS fleet view ---------- */
+/* ---------- Live AWS fleet view ---------- */
 
 async function refreshFleet(slot) {
   const wrap = slot.querySelector("#fleetSection .fleet-wrap");
@@ -314,7 +314,7 @@ async function refreshFleet(slot) {
   try {
     const d = await (await fetch("/api/aws/fleet")).json();
     if (!d.available) {
-      wrap.innerHTML = `<div class="empty">Mock AWS not running.</div>`;
+      wrap.innerHTML = `<div class="empty">AWS not reachable.</div>`;
       return;
     }
     const rows = (d.instances || []).map((i) => {

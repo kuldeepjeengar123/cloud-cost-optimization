@@ -22,6 +22,8 @@ import json
 import queue
 import sys
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -74,6 +76,73 @@ CHAT_HISTORY = ChatHistoryStore(APP_CFG.chat_db_path)
 # Flipped around run_pipeline() so /api/chat knows to stay in "info" mode
 # while a run is in flight, instead of answering against stale insights.
 PIPELINE_RUNNING = threading.Event()
+
+# `target` is the dashboard's single source-selector dropdown (Local files /
+# EC2 Rightsizing / Real AWS) — mapping it to sources+backend lives here, in
+# one place, instead of the client having to know what each target implies.
+# Older callers (web/app.js) that still send sources/backend directly keep
+# working unchanged (see _handle_run's fallback).
+TARGET_MAP = {
+    "local_csv": {"sources": ["local_csv"], "backend": "csv"},
+    "ec2_rightsizing": {"sources": ["local_csv"], "backend": "aws"},
+    "real_aws": {"sources": ["cost_explorer", "cloudwatch"], "backend": "aws"},
+}
+# Query override for a target whose analysis should focus on something more
+# specific than the default broad cost review. Deliberately names no instance
+# type — it steers the LLM's attention at the same by-instance-type
+# correlation/anomaly data every run already gets; which instance type (and
+# what to resize it to) is the LLM's own read of that data, not this string.
+TARGET_QUERY = {
+    "ec2_rightsizing": (
+        "Analyze EC2 cost by instance type and identify any instance type "
+        "showing signs of being undersized (e.g. cost spikes consistent with "
+        "CPU credit exhaustion on a burstable instance). Recommend the "
+        "specific instance type change needed to resolve it."
+    ),
+}
+# The target the *last completed run* actually used — see _handle_get_target.
+# Tracked separately from APP_CFG.action_backend because backend "aws" alone
+# is ambiguous between "ec2_rightsizing" and "real_aws" (they differ only in
+# `sources`).
+LAST_TARGET = "local_csv"
+
+# One AWS client for the whole process. Its boto3 clients are built lazily
+# and then cached on the instance, and that cold start — credential-chain
+# resolution, TLS handshake, the STS account lookup list_budgets needs — is
+# ~3-4s, against ~0.25s for the same calls once warm. Building a fresh
+# RealAWSClient per request (as this handler used to) paid that cold start
+# on every single fleet read, which is most of why the dashboard's buttons
+# felt slow. Region comes from the environment and never changes at runtime,
+# so a plain singleton is enough; botocore clients are safe to share across
+# the ThreadingHTTPServer's threads.
+_aws_client = None
+_aws_client_lock = threading.Lock()
+
+
+def _shared_aws_client():
+    global _aws_client
+    with _aws_client_lock:
+        if _aws_client is None:
+            from src.aws.real_client import RealAWSClient
+
+            _aws_client = RealAWSClient(APP_CFG)
+        return _aws_client
+
+
+# /api/aws/fleet is re-fetched by the dashboard's loadState() after nearly
+# every button click (accept/reject/stage/commit/reset...). Even warm, that's
+# a real network round trip, so hold the last good read briefly: a click that
+# actually changes the fleet (commit/rollback) invalidates it immediately,
+# and the Refresh button forces a fresh read, so nothing goes stale unnoticed.
+_FLEET_CACHE_TTL = 30.0  # seconds
+_fleet_cache_lock = threading.Lock()
+_fleet_cache = {"ts": 0.0, "payload": None}
+
+
+def _invalidate_fleet_cache() -> None:
+    with _fleet_cache_lock:
+        _fleet_cache["ts"] = 0.0
+        _fleet_cache["payload"] = None
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -161,45 +230,43 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(raw.decode("utf-8") or "{}")
         except json.JSONDecodeError:
             body = {}
-        query = body.get("query") or (
-            "Provide a comprehensive AWS cost analysis with key insights and recommendations."
-        )
 
-        # `target` is the dashboard's single source-selector dropdown (Local
-        # files / Mock AWS / Real AWS) — mapping it to sources+backend+
-        # aws_use_mock lives here, in one place, instead of the client having
-        # to know what each target implies. Older callers (web/app.js) that
-        # still send sources/backend directly keep working unchanged.
         target = (body.get("target") or "").strip().lower()
-        TARGET_MAP = {
-            "local_csv": {"sources": ["local_csv"], "backend": "csv", "aws_use_mock": True},
-            "mock_aws": {"sources": ["cost_explorer", "cloudwatch"], "backend": "aws", "aws_use_mock": True},
-            "real_aws": {"sources": ["cost_explorer", "cloudwatch"], "backend": "aws", "aws_use_mock": False},
-        }
         if target in TARGET_MAP:
             mapped = TARGET_MAP[target]
-            sources, backend, aws_use_mock = mapped["sources"], mapped["backend"], mapped["aws_use_mock"]
+            sources, backend = mapped["sources"], mapped["backend"]
         else:
             sources = body.get("sources") or ["local_csv"]
             # Backend: explicit from the client, else infer ("aws" when reading
-            # from the mock AWS sources so applied changes hit the live mock).
+            # from the cost_explorer/cloudwatch sources).
             backend = body.get("backend")
             if not backend:
                 backend = "aws" if any(s in ("cost_explorer", "cloudwatch") for s in sources) else "csv"
-            aws_use_mock = body.get("aws_use_mock", APP_CFG.aws_use_mock)
+            # Best-effort target label for callers that skip TARGET_MAP (older
+            # web/app.js-style calls) so _handle_get_target still reports something.
+            if backend != "aws":
+                target = "local_csv"
+            elif sources == ["local_csv"]:
+                target = "ec2_rightsizing"
+            else:
+                target = "real_aws"
+
+        query = TARGET_QUERY.get(target) or body.get("query") or (
+            "Provide a comprehensive AWS cost analysis with key insights and recommendations."
+        )
 
         date_range = (body.get("date_range") or "").strip().lower() or None
         cfg = load_config(
             user_query=query, sources=sources, action_backend=backend,
-            date_range=date_range, aws_use_mock=aws_use_mock,
+            date_range=date_range,
         )
         # Every other handler (stage/commit/apply/rollback/fleet reads) acts
         # against the shared APP_CFG, not this per-run cfg — keep it in sync
         # with whatever target this run selected so an approved change from
-        # a "Real AWS" run doesn't silently commit against the mock (or vice
-        # versa).
+        # a "Real AWS" run doesn't silently commit against the wrong backend.
+        global LAST_TARGET
         APP_CFG.action_backend = cfg.action_backend
-        APP_CFG.aws_use_mock = cfg.aws_use_mock
+        LAST_TARGET = target
 
         # A fresh run starts from a clean slate: drop every action (pending,
         # applied, dismissed, declined) left over from earlier runs so the
@@ -277,45 +344,64 @@ class Handler(BaseHTTPRequestHandler):
         """The target the *last completed run* actually used — authoritative
         over whatever a client's own localStorage remembers, since APP_CFG is
         shared across every tab/session hitting this server."""
-        if APP_CFG.action_backend == "csv":
-            target = "local_csv"
-        else:
-            target = "mock_aws" if APP_CFG.aws_use_mock else "real_aws"
         self._send_json(HTTPStatus.OK, {
-            "target": target, "aws_use_mock": APP_CFG.aws_use_mock,
-            "action_backend": APP_CFG.action_backend,
+            "target": LAST_TARGET, "action_backend": APP_CFG.action_backend,
         })
 
     def _handle_aws_fleet(self) -> None:
-        """Proxy the live AWS inventory + budgets — mock or real, per the
-        most recently selected run target (see ``_handle_run``) — so the
-        report page can show what changed after an apply, same-origin."""
-        if APP_CFG.aws_use_mock:
-            from src.mock_aws.client import MockAWSClient, ensure_mock_server
-            if not ensure_mock_server(APP_CFG.aws_endpoint_url):
-                return self._send_json(HTTPStatus.OK, {"available": False, "instances": []})
-            client = MockAWSClient(APP_CFG.aws_endpoint_url)
-        else:
-            from src.aws.real_client import RealAWSClient
-            client = RealAWSClient(APP_CFG)
-            if not client.ping():
-                return self._send_json(HTTPStatus.OK, {"available": False, "instances": []})
+        """Proxy the live AWS inventory + budgets so the report page can show
+        what changed after an apply, same-origin.
+
+        Cached for ``_FLEET_CACHE_TTL`` seconds (see that constant) so a burst
+        of dashboard clicks doesn't each pay for a fresh round trip to AWS;
+        pass ``?fresh=1`` (the "Refresh" button in live mode) to force one.
+        """
+        force = parse_qs(urlparse(self.path).query).get("fresh", ["0"])[0] == "1"
+        with _fleet_cache_lock:
+            cached = _fleet_cache["payload"]
+            age = time.monotonic() - _fleet_cache["ts"]
+        if cached is not None and age < _FLEET_CACHE_TTL and not force:
+            return self._send_json(HTTPStatus.OK, cached)
+
+        client = _shared_aws_client()
         try:
-            instances = client.describe_instances()["Reservations"][0]["Instances"]
-            budgets = client.list_budgets().get("Budgets", [])
+            # describe_instances and list_budgets are independent AWS calls —
+            # run them concurrently instead of back-to-back so the request
+            # takes as long as the slower of the two, not their sum.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                instances_future = pool.submit(lambda: client.describe_instances()["Reservations"][0]["Instances"])
+                budgets_future = pool.submit(lambda: client.list_budgets().get("Budgets", []))
+                instances = instances_future.result()
+                budgets = budgets_future.result()
         except Exception as exc:  # never 500 the dashboard's fleet panel
             log.warning("Fleet read failed: %s", exc)
-            return self._send_json(HTTPStatus.OK, {"available": False, "instances": []})
+            payload = {"available": False, "instances": []}
+            self._cache_fleet(payload)
+            return self._send_json(HTTPStatus.OK, payload)
+
         running = [i for i in instances if i.get("State", {}).get("Name") == "running"]
-        self._send_json(HTTPStatus.OK, {
+        stopped = [i for i in instances if i.get("State", {}).get("Name") == "stopped"]
+        payload = {
             "available": True,
-            "mock": APP_CFG.aws_use_mock,
-            "endpoint": APP_CFG.aws_endpoint_url if APP_CFG.aws_use_mock else APP_CFG.aws_region,
+            "endpoint": APP_CFG.aws_region,
             "instances": instances,
+            "total_count": len(instances),
             "running_count": len(running),
+            "stopped_count": len(stopped),
             "monthly_cost": round(sum(i.get("MonthlyCost", 0) for i in running), 2),
             "budgets": budgets,
-        })
+        }
+        self._cache_fleet(payload)
+        self._send_json(HTTPStatus.OK, payload)
+
+    @staticmethod
+    def _cache_fleet(payload: dict) -> None:
+        """Stamp the cache *after* the AWS call returns, not before it starts —
+        a read slower than the TTL would otherwise land already expired and
+        never serve anyone."""
+        with _fleet_cache_lock:
+            _fleet_cache["ts"] = time.monotonic()
+            _fleet_cache["payload"] = payload
 
     def _handle_apply(self) -> None:
         """The Teams-card one-click link (``/apply?id=...``).
@@ -592,6 +678,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # never 500 the user-facing button
             log.exception("Commit failed")
             return self._send_json(HTTPStatus.OK, {"ok": False, "message": str(exc)})
+        _invalidate_fleet_cache()  # a commit may have stopped/resized/terminated real instances
         self._send_json(HTTPStatus.OK, {"ok": True, **summary})
 
     def _handle_rollback(self) -> None:
@@ -610,35 +697,21 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # never 500 the user-facing button
             log.exception("Rollback failed")
             return self._send_json(HTTPStatus.OK, {"ok": False, "message": str(exc)})
+        _invalidate_fleet_cache()  # a rollback may have reversed a real AWS mutation
         self._send_json(HTTPStatus.OK, {"ok": True, **summary})
 
     def _handle_test_reset(self) -> None:
-        """Test-only: undo every raise/apply/decline so the dashboard reads
-        exactly as it did right after the last pipeline run, without needing
-        to re-run the pipeline (and burn LLM quota) to get back there. Also
-        re-seeds the mock EC2 fleet, best-effort, since approved resize/stop/
-        terminate actions mutate it and a decision reset without a fleet
-        reset would let the same action be "applied" onto an already-changed
-        instance.
+        """Test-only: wipe every action and decision so the dashboard goes back
+        to a clean slate (no recommendations, no charts) — the same state as
+        before any pipeline run — without needing to restart the server.
         """
-        reset_count = ACTION_STORE.reset_all_to_pending()
+        cleared = ACTION_STORE.clear()
         DECISION_LOG.clear()
-
-        fleet_reset = False
-        try:
-            from src.mock_aws.client import MockAWSClient, ensure_mock_server
-            if ensure_mock_server(APP_CFG.aws_endpoint_url):
-                MockAWSClient(APP_CFG.aws_endpoint_url).reset()
-                fleet_reset = True
-        except Exception as exc:
-            log.warning("Mock fleet reset skipped (%s)", exc)
 
         self._send_json(HTTPStatus.OK, {
             "ok": True,
-            "actions_reset": reset_count,
-            "fleet_reset": fleet_reset,
-            "message": f"Reset {reset_count} action(s) to pending, cleared the decision log"
-                       + (", and re-seeded the mock fleet." if fleet_reset else "."),
+            "actions_cleared": cleared,
+            "message": f"Cleared {cleared} action(s) and the decision log.",
         })
 
     def _send_json(self, status: HTTPStatus, obj: dict) -> None:

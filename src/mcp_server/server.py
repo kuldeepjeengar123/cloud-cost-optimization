@@ -67,11 +67,6 @@ mcp = FastMCP(
 
 
 def _client():
-    if CFG.aws_use_mock:
-        from ..mock_aws.client import MockAWSClient, ensure_mock_server
-
-        ensure_mock_server(CFG.aws_endpoint_url)
-        return MockAWSClient(CFG.aws_endpoint_url)
     from ..aws.real_client import RealAWSClient
 
     return RealAWSClient(CFG)
@@ -136,8 +131,7 @@ def preview_action(action_id: str) -> dict:
 
 @mcp.tool()
 def describe_fleet() -> dict:
-    """Current EC2 fleet (mock or real, per AWS_USE_MOCK) with running count
-    and total monthly cost."""
+    """Current EC2 fleet (real AWS) with running count and total monthly cost."""
     instances = _client().describe_instances()["Reservations"][0]["Instances"]
     running = [i for i in instances if i.get("State", {}).get("Name") == "running"]
     result = {
@@ -151,7 +145,7 @@ def describe_fleet() -> dict:
 
 @mcp.tool()
 def get_cost_and_usage(granularity: str = "DAILY", group_by: str = "SERVICE", days: int = 30) -> dict:
-    """Cost Explorer-shaped cost data (mock or real, per AWS_USE_MOCK).
+    """Cost Explorer-shaped cost data (real AWS).
     granularity: DAILY|MONTHLY. group_by: SERVICE|REGION|INSTANCE_TYPE|TAG."""
     args = {"granularity": granularity, "group_by": group_by, "days": days}
     data = _client().get_cost_and_usage(granularity, group_by, days)
@@ -161,7 +155,7 @@ def get_cost_and_usage(granularity: str = "DAILY", group_by: str = "SERVICE", da
 @mcp.tool()
 def get_metric_statistics(namespace: str = "AWS/EC2", metric: str = "CPUUtilization",
                            hours: int = 24, instance_id: str | None = None) -> dict:
-    """CloudWatch-shaped metric datapoints (mock or real, per AWS_USE_MOCK)."""
+    """CloudWatch-shaped metric datapoints (real AWS)."""
     args = {"namespace": namespace, "metric": metric, "hours": hours, "instance_id": instance_id}
     data = _client().get_metric_statistics(namespace, metric, hours, instance_id)
     return _log_ok("get_metric_statistics", args, "any", {"ok": True, "data": data})
@@ -169,7 +163,7 @@ def get_metric_statistics(namespace: str = "AWS/EC2", metric: str = "CPUUtilizat
 
 @mcp.tool()
 def list_budgets() -> dict:
-    """Current AWS Budgets (mock or real, per AWS_USE_MOCK)."""
+    """Current AWS Budgets (real AWS)."""
     budgets = _client().list_budgets().get("Budgets", [])
     return _log_ok("list_budgets", {}, "any", {"ok": True, "budgets": budgets})
 

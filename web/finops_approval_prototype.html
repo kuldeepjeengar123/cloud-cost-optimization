@@ -30,7 +30,7 @@
         <span class="fl">Target</span>
         <select id="targetSelect" aria-label="Data / AWS target">
           <option value="local_csv">Local files (CSV)</option>
-          <option value="mock_aws">Mock AWS (live)</option>
+          <option value="ec2_rightsizing">EC2 Rightsizing (t3.nano → t3.micro)</option>
           <option value="real_aws">Real AWS</option>
         </select>
       </div>
@@ -53,15 +53,33 @@
         </div>
       </div>
       <button class="btn-ghost" id="resetBtn" type="button">Reset prototype</button>
-      <!-- TEST-ONLY control — remove before shipping. Undoes every raise/apply/
-           decline and re-seeds the mock fleet, so the dashboard reads exactly
-           as it did right after the last pipeline run, without re-running it. -->
+      <!-- TEST-ONLY control — remove before shipping. Wipes every action,
+           decision and pipeline-run result so the dashboard goes back to a
+           clean slate (no recommendations, no charts). -->
       <button class="btn-ghost" id="resetTestDataBtn" type="button"
-              style="border-color:rgba(255,204,77,.5);color:#ffd876" title="Test-only: undo every decision and re-seed the mock fleet">
+              style="border-color:rgba(255,204,77,.5);color:#ffd876" title="Test-only: clear every recommendation, decision and chart">
         Reset test data
       </button>
     </div>
   </header>
+
+  <!-- ============ Live EC2 instances — type and state ============
+       Sits directly under the Target dropdown because it belongs to the "EC2
+       Rightsizing" target: which instance types exist right now, and how many
+       of each are running or stopped. Shown only while that target is
+       selected (see drawInstanceStateTable) — starts hidden so picking any
+       other target never flashes it. Read live from describe_instances, so it
+       is populated before any pipeline run, in both roles. -->
+  <div class="card" id="instancePanel" style="margin-bottom:14px" hidden>
+    <div class="chart-head">
+      <div>
+        <h3>EC2 instances — type and state</h3>
+        <p class="csub" id="instancePanelSub">Waiting on the fleet read.</p>
+      </div>
+      <span class="chip mono" id="instancePanelTarget">local_csv</span>
+    </div>
+    <div class="table-view" id="tblInstanceStates"></div>
+  </div>
 
   <!-- ================= Provenance ================= -->
   <div class="provenance">
@@ -173,6 +191,7 @@
           <div>
             <h3>EC2 fleet — utilization against monthly cost</h3>
             <p class="csub">Anything expensive and to the left is a candidate to switch off or shrink. Updates live as changes are applied.</p>
+            <p class="csub" id="fleetSummaryCaption">Waiting on the fleet read.</p>
           </div>
           <button class="tv-toggle" data-table="tblFleet" aria-pressed="false" type="button">Table</button>
         </div>
@@ -294,13 +313,14 @@
           <div>
             <h3>Fleet under review — what the queue would change</h3>
             <p class="csub">Instances targeted by a pending request are ringed. Approving moves the mark; declining leaves it where it is.</p>
+            <p class="csub" id="fleetSummaryCaptionRe">Waiting on the fleet read.</p>
           </div>
           <button class="tv-toggle" data-table="tblReFleet" aria-pressed="false" type="button">Table</button>
         </div>
         <div class="plot" id="chartReFleet"></div>
         <div class="legend" id="legendReFleet"></div>
         <div class="table-view" id="tblReFleet" hidden></div>
-        <p class="chart-foot">Approving runs the calls listed on each request against <span class="mono">http://127.0.0.1:8788</span> (mock AWS). With <span class="mono">AWS_USE_MOCK=0</span> the same calls go to boto3.</p>
+        <p class="chart-foot">Approving runs the calls listed on each request against your configured AWS account via <span class="mono">boto3</span>.</p>
       </div>
     </div>
 
@@ -521,7 +541,7 @@ let liveMode = false;
 let latestPipelinePayload = null;
 
 /* =========================================================================
-   1a. TARGET SELECTOR (Local files / Mock AWS / Real AWS)
+   1a. TARGET SELECTOR (Local files / EC2 Rightsizing / Real AWS)
    ------------------------------------------------------------------------
    Persisted per-browser in localStorage so it survives a reload, but the
    server's /api/target is authoritative (see server.py's _handle_get_target):
@@ -529,7 +549,7 @@ let latestPipelinePayload = null;
    target the *last completed run* actually used is what stage/commit/apply/
    rollback/fleet reads act against — this UI reflects that, it doesn't own it.
    ========================================================================= */
-const TARGET_LABEL = {local_csv:"local_csv", mock_aws:"mock_aws (live)", real_aws:"real_aws"};
+const TARGET_LABEL = {local_csv:"local_csv", ec2_rightsizing:"ec2_rightsizing", real_aws:"real_aws"};
 let currentTarget = localStorage.getItem("awsTarget") || "local_csv";
 
 function applyTargetToUI(){
@@ -569,6 +589,27 @@ async function apiPost(path, body){
   const data = await r.json().catch(() => ({}));
   if(!r.ok) throw new Error(data.error || (path + " -> HTTP " + r.status));
   return data;
+}
+
+/* Spinner for any button that kicks off a backend call — shown from the
+   click until the request settles and the surrounding list re-renders.
+   Safe to call even if the button gets replaced by that re-render (a stale
+   reference just does nothing visible). */
+function setBusy(btn){
+  if(!btn || btn.dataset.busy === "1") return;
+  btn.dataset.busy = "1";
+  btn.dataset.prevHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.classList.add("is-busy");
+  btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>' + btn.innerHTML;
+}
+function clearBusy(btn){
+  if(!btn || btn.dataset.busy !== "1") return;
+  btn.innerHTML = btn.dataset.prevHtml;
+  delete btn.dataset.prevHtml;
+  delete btn.dataset.busy;
+  btn.disabled = false;
+  btn.classList.remove("is-busy");
 }
 
 const BACKEND_TO_UI_STATUS = {
@@ -641,25 +682,34 @@ function mapInstance(i, prevFleet){
   };
 }
 
-async function loadState(){
-  try{
-    const fleetData = await apiGet("/api/aws/fleet");
-    fleet = fleetData.available
-      ? fleetData.instances.map(i => mapInstance(i, fleet))
-      : (fleet.length ? fleet : FLEET_SEED.map(i => ({...i, origType:i.type})));
-  }catch(e){
-    fleet = fleet.length ? fleet : FLEET_SEED.map(i => ({...i, origType:i.type}));
-  }
-  try{
-    const [actionsData, decisionsData] = await Promise.all([apiGet("/api/actions"), apiGet("/api/decisions")]);
-    recs = (actionsData.actions || []).map(mapAction);
-    log = (decisionsData.decisions || []).map(mapDecision);
-    liveMode = true;
-  }catch(e){
-    liveMode = false;
-    recs = REC_SEED.map(r => ({...r, status:ST.OPEN, raisedAt:null, decidedAt:null, reason:null, resultNote:null}));
-    log = [];
-  }
+async function loadState(fresh){
+  // Fleet and actions/decisions are independent reads — fetch them together
+  // instead of one after another, so a click waits for the slower of the two
+  // instead of their sum. Pass fresh:true (e.g. an explicit "Refresh") to
+  // bypass the server's short fleet cache and force a live AWS read.
+  const fleetPromise = apiGet("/api/aws/fleet" + (fresh ? "?fresh=1" : ""))
+    .then(fleetData => {
+      fleet = fleetData.available
+        ? fleetData.instances.map(i => mapInstance(i, fleet))
+        : (fleet.length ? fleet : FLEET_SEED.map(i => ({...i, origType:i.type})));
+    })
+    .catch(() => {
+      fleet = fleet.length ? fleet : FLEET_SEED.map(i => ({...i, origType:i.type}));
+    });
+
+  const actionsPromise = Promise.all([apiGet("/api/actions"), apiGet("/api/decisions")])
+    .then(([actionsData, decisionsData]) => {
+      recs = (actionsData.actions || []).map(mapAction);
+      log = (decisionsData.decisions || []).map(mapDecision);
+      liveMode = true;
+    })
+    .catch(() => {
+      liveMode = false;
+      recs = REC_SEED.map(r => ({...r, status:ST.OPEN, raisedAt:null, decidedAt:null, reason:null, resultNote:null}));
+      log = [];
+    });
+
+  await Promise.all([fleetPromise, actionsPromise]);
   updateProvenanceBadge();
 }
 function updateProvenanceBadge(){
@@ -854,7 +904,8 @@ async function startPipelineRun(){
   runInFlight = true;
   const startBtn = document.getElementById("runStart");
   startBtn.disabled = true;
-  startBtn.textContent = "Running…";
+  startBtn.classList.add("is-busy");
+  startBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Running…';
   const resultEl = document.getElementById("runResult");
   resultEl.innerHTML = "";
   document.getElementById("runReport").hidden = true;
@@ -904,6 +955,7 @@ async function startPipelineRun(){
   toast("ok", "Dashboard refreshed", "Recommendations, queue and fleet now reflect the new run.");
   runInFlight = false;
   startBtn.disabled = false;
+  startBtn.classList.remove("is-busy");
   startBtn.textContent = "Start run";
 }
 
@@ -1296,8 +1348,92 @@ function drawDailyChart(){
   document.getElementById("footDaily").textContent =
     `Max daily ${money2(max)}, avg daily ${money2(avg)} for this run.`;
 }
+function fleetStateCounts(list){
+  const counts = {total:list.length, running:0, stopped:0, other:0};
+  list.forEach(i => {
+    if(i.state === "running") counts.running++;
+    else if(i.state === "stopped") counts.stopped++;
+    else counts.other++;
+  });
+  return counts;
+}
+function fleetStateSummaryText(list, totalAll){
+  if(!list.length) return "No instances match the current filters.";
+  const c = fleetStateCounts(list);
+  let text = `${c.total} instance${c.total>1?"s":""} in scope — ${c.running} running, ${c.stopped} stopped`;
+  if(c.other) text += `, ${c.other} other`;
+  if(totalAll != null && totalAll !== c.total) text += ` (${totalAll} total in the account)`;
+  return text;
+}
+/* The nano <-> micro swap the backend plans actions from, mirrored here so the
+   table can show what each type would be resized to. Keep in step with
+   planner._NANO_MICRO_SWAP: nano and micro swap for each other, running or
+   stopped alike; anything else has no automatic rightsizing suggestion. */
+const NANO_MICRO_SWAP = {nano:"micro", micro:"nano"};
+function rightsizeTargetFor(type){
+  const dot = (type || "").indexOf(".");
+  if(dot < 1) return null;
+  const family = type.slice(0, dot), size = type.slice(dot + 1);
+  const swap = NANO_MICRO_SWAP[size];
+  return swap ? `${family}.${swap}` : null;
+}
+/* Counts by instance type and state, plus what each type would be resized to.
+   This is the table that answers "what have I actually got, what is running,
+   and what would rightsizing change it to" — the same question the nano <->
+   micro recommendations are generated from. */
+function drawInstanceStateTable(){
+  const panel = document.getElementById("instancePanel");
+  const host = document.getElementById("tblInstanceStates");
+  if(!panel || !host) return;
+  // Belongs to the EC2 Rightsizing target: the nano <-> micro swap it
+  // describes is only planned for that target. On any other target (local
+  // files, real AWS) it goes away rather than showing a table nothing acts on.
+  panel.hidden = currentTarget !== "ec2_rightsizing";
+  if(panel.hidden) return;
+  const list = fleetInScope();
+  const sub = document.getElementById("instancePanelSub");
+  const chip = document.getElementById("instancePanelTarget");
+  if(chip) chip.textContent = TARGET_LABEL[currentTarget] || currentTarget;
+
+  if(!list.length){
+    host.innerHTML = `<p class="csub" style="margin:0;padding:10px">`
+      + (fleet.length ? "No instances match the current filters."
+                      : "No instances read yet — the fleet is empty or AWS is unreachable.")
+      + `</p>`;
+    if(sub) sub.textContent = fleet.length
+      ? "No instances match the current filters."
+      : "Waiting on the fleet read.";
+    return;
+  }
+
+  const byType = new Map();
+  list.forEach(i => {
+    if(!byType.has(i.type)) byType.set(i.type, []);
+    byType.get(i.type).push(i);
+  });
+  const rows = [...byType.entries()]
+    .sort((a,b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .map(([type, items]) => {
+      const c = fleetStateCounts(items);
+      const swap = rightsizeTargetFor(type);
+      return [type, String(c.total), String(c.running), String(c.stopped),
+              money2(items.reduce((s,i) => s + instCost(i), 0)),
+              swap ? "→ " + swap : "—"];
+    });
+  const all = fleetStateCounts(list);
+  rows.push(["All types", String(all.total), String(all.running), String(all.stopped),
+             money2(list.reduce((s,i) => s + instCost(i), 0)), ""]);
+  renderTable(host,
+    [{label:"Instance type"},{label:"Instances", num:true},{label:"Running", num:true},
+     {label:"Stopped", num:true},{label:"USD / month", num:true},{label:"Rightsizing suggestion"}],
+    rows);
+  if(sub) sub.textContent = fleetStateSummaryText(list, fleet.length)
+    + ". Nano and micro are suggested for a swap whether running or stopped.";
+}
 function drawFleetChart(){
   const list = fleetInScope();
+  const capEl = document.getElementById("fleetSummaryCaption");
+  if(capEl) capEl.textContent = fleetStateSummaryText(list, fleet.length);
   fleetScatter(document.getElementById("chartFleet"), list, {ring:pendingTargets()}, {utilBand, instCost, monthlyOf});
   renderLegend(document.getElementById("legendFleet"),
     fleetLegendItems(pendingTargets().size ? "Targeted by a pending request" : null));
@@ -1471,6 +1607,8 @@ function renderRe(){
     ? `Down from ${money(fc)} if the whole queue is approved`
     : `Current fleet cost, nothing pending`;
 
+  const capElRe = document.getElementById("fleetSummaryCaptionRe");
+  if(capElRe) capElRe.textContent = fleetStateSummaryText(fleetInScope(), fleet.length);
   fleetScatter(document.getElementById("chartReFleet"), fleetInScope(),
                {ring:pendingTargets(), height:290}, {utilBand, instCost, monthlyOf});
   renderLegend(document.getElementById("legendReFleet"),
@@ -1524,7 +1662,7 @@ function renderCommitPanel(){
       </button>
     </div>`;
   const btn = document.getElementById("commitBtn");
-  if(btn) btn.addEventListener("click", commitQueue);
+  if(btn) btn.addEventListener("click", () => commitQueue(btn));
 }
 
 function renderRealAwsWarning(hostId){
@@ -1699,7 +1837,8 @@ function renderFlowRail(){
 /* =========================================================================
    5. WORKFLOW TRANSITIONS
    ========================================================================= */
-async function runBackendAction(path, body, okTitle, okKind){
+async function runBackendAction(path, body, okTitle, okKind, btn){
+  setBusy(btn);
   try{
     const data = await apiPost(path, body);
     if(data.ok === false) toast("no", "Action failed", data.message || "The backend rejected this change.");
@@ -1709,39 +1848,40 @@ async function runBackendAction(path, body, okTitle, okKind){
   }
   await loadState();
   renderAll();
+  clearBusy(btn);
 }
 
-function employeeAccept(id){
+function employeeAccept(id, btn){
   const r = byId(id); if(!r || r.status !== ST.OPEN) return;
   if(!liveMode) return localAccept(id);
   runBackendAction("/api/actions/raise", {id, raised_by: EMPLOYEE.name},
-    "Request raised", "wait");
+    "Request raised", "wait", btn);
 }
-function employeeReject(id){
+function employeeReject(id, btn){
   const r = byId(id); if(!r || r.status !== ST.OPEN) return;
   if(!liveMode) return localReject(id);
   runBackendAction("/api/apply", {id, decision:"dismiss"},
-    "Recommendation rejected", "no");
+    "Recommendation rejected", "no", btn);
 }
-function employeeAck(id){
+function employeeAck(id, btn){
   const r = byId(id); if(!r || r.status !== ST.OPEN) return;
   if(!liveMode) return localAck(id);
   runBackendAction("/api/apply", {id, decision:"apply"},
-    "Acknowledged", "ok");
+    "Acknowledged", "ok", btn);
 }
-function employeeWithdraw(id){
+function employeeWithdraw(id, btn){
   const r = byId(id); if(!r || r.status !== ST.PENDING_RE) return;
   if(!liveMode) return localWithdraw(id);
   runBackendAction("/api/actions/withdraw", {id, actor: EMPLOYEE.name},
-    "Request withdrawn", "wait");
+    "Request withdrawn", "wait", btn);
 }
-function employeeReopen(id){
+function employeeReopen(id, btn){
   const r = byId(id); if(!r) return;
   if(!liveMode) return localReopen(id);
   runBackendAction("/api/actions/reopen", {id, actor: EMPLOYEE.name},
-    "Reopened", "wait");
+    "Reopened", "wait", btn);
 }
-function reStageApprove(id){
+function reStageApprove(id, btn){
   const r = byId(id); if(!r || r.status !== ST.PENDING_RE) return;
   const override = r.risk === "high" ? !!document.getElementById("ovr_" + id)?.checked : false;
   if(r.risk === "high" && !override){
@@ -1750,24 +1890,25 @@ function reStageApprove(id){
   }
   if(!liveMode) return localStageApprove(id);
   runBackendAction("/api/actions/stage", {id, decision:"approve", staged_by: RE_USER.name, override},
-    "Staged to approve", "wait");
+    "Staged to approve", "wait", btn);
 }
-function reStageDecline(id, reason){
+function reStageDecline(id, reason, btn){
   const r = byId(id); if(!r || r.status !== ST.PENDING_RE) return;
   if(!liveMode) return localStageDecline(id, reason);
   runBackendAction("/api/actions/stage", {id, decision:"decline", staged_by: RE_USER.name, reason},
-    "Staged to decline", "wait");
+    "Staged to decline", "wait", btn);
 }
-function reUnstage(id){
+function reUnstage(id, btn){
   const r = byId(id); if(!r || (r.status !== ST.STAGED_APPROVE && r.status !== ST.STAGED_DECLINE)) return;
   if(!liveMode) return localUnstage(id);
   runBackendAction("/api/actions/unstage", {id, actor: RE_USER.name},
-    "Back in the queue", "wait");
+    "Back in the queue", "wait", btn);
 }
-async function commitQueue(){
+async function commitQueue(btn){
   const r = commitReadiness();
   if(!r.ready) return;
   if(!liveMode) return localCommitBatch();
+  setBusy(btn);
   try{
     const data = await apiPost("/api/actions/commit", {decided_by: RE_USER.name});
     if(data.ok === false){
@@ -1780,14 +1921,16 @@ async function commitQueue(){
   }catch(e){
     toast("no","Commit failed", e.message);
   }
-  await loadState();
+  await loadState(true);
   renderAll();
+  clearBusy(btn);
 }
-async function rollbackBatch(batchId){
+async function rollbackBatch(batchId, btn){
   if(!liveMode){
     toast("no","Not available in demo mode","Rollback needs the live backend — connect it or run the pipeline first.");
     return;
   }
+  setBusy(btn);
   try{
     const data = await apiPost("/api/actions/rollback", {batch_id: batchId, actor: RE_USER.name});
     if(data.ok === false) toast("no","Rollback failed", data.error || data.message || "");
@@ -1795,8 +1938,9 @@ async function rollbackBatch(batchId){
   }catch(e){
     toast("no","Rollback failed", e.message);
   }
-  await loadState();
+  await loadState(true);
   renderAll();
+  clearBusy(btn);
 }
 function renderCommitResult(data){
   const host = document.getElementById("commitResult");
@@ -1941,6 +2085,9 @@ function setRole(next){
 
 function renderAll(){
   if(role === "emp") renderEmployee(); else renderRe();
+  // Lives outside both role views and does not wait on a pipeline run, so it
+  // is drawn here rather than from either role's render.
+  drawInstanceStateTable();
   const q = queue().length;
   const badge = document.getElementById("queueBadge");
   badge.textContent = q; badge.hidden = q === 0;
@@ -1957,11 +2104,14 @@ document.getElementById("targetSelect").addEventListener("change", e => {
 
 document.getElementById("roleEmp").addEventListener("click", () => setRole("emp"));
 document.getElementById("roleRe").addEventListener("click",  () => setRole("re"));
-document.getElementById("resetBtn").addEventListener("click", async () => {
+document.getElementById("resetBtn").addEventListener("click", async (ev) => {
+  const btn = ev.currentTarget;
   if(liveMode){
+    setBusy(btn);
     toast("wait","Refreshing","Reloading actions, decisions and fleet from the backend.");
-    await loadState();
+    await loadState(true);
     renderAll();
+    clearBusy(btn);
     return;
   }
   resetState();
@@ -1972,15 +2122,28 @@ document.getElementById("resetBtn").addEventListener("click", async () => {
 });
 
 // TEST-ONLY — remove this block along with the button once testing is done.
-document.getElementById("resetTestDataBtn").addEventListener("click", async () => {
+document.getElementById("resetTestDataBtn").addEventListener("click", async (ev) => {
+  const btn = ev.currentTarget;
+  setBusy(btn);
   try{
     const data = await apiPost("/api/test/reset", {});
-    toast("wait", "Test data reset", data.message || "Every decision was undone.");
+    toast("wait", "Test data reset", data.message || "Every recommendation and decision was cleared.");
   }catch(e){
     toast("no", "Reset failed", e.message);
   }
-  await loadState();
+  // The pipeline-run result (charts, KPIs, report) lives only in this tab's
+  // memory — the backend reset above doesn't know about it, so clear it here.
+  latestPipelinePayload = null;
+  const runReport = document.getElementById("runReport");
+  if(runReport){ runReport.hidden = true; runReport.innerHTML = ""; }
+  const provCharts = document.getElementById("provCharts");
+  if(provCharts){
+    provCharts.innerHTML = "<b>Charts above</b> are empty until you run the pipeline with " +
+      "\"Run a new analysis\" above — nothing shown is fabricated or reference data.";
+  }
+  await loadState(true);
   renderAll();
+  clearBusy(btn);
 });
 
 document.getElementById("fEnv").addEventListener("change", e => { filters.env = e.target.value; renderAll(); });
@@ -2000,14 +2163,14 @@ document.addEventListener("click", ev => {
     t.textContent = shown ? "Table" : "Hide table";
     return;
   }
-  if(t.dataset.accept)   return employeeAccept(t.dataset.accept);
-  if(t.dataset.reject)   return employeeReject(t.dataset.reject);
-  if(t.dataset.ack)      return employeeAck(t.dataset.ack);
-  if(t.dataset.withdraw) return employeeWithdraw(t.dataset.withdraw);
-  if(t.dataset.reopen)   return employeeReopen(t.dataset.reopen);
-  if(t.dataset.stageapprove) return reStageApprove(t.dataset.stageapprove);
-  if(t.dataset.unstage)  return reUnstage(t.dataset.unstage);
-  if(t.dataset.rollback) return rollbackBatch(t.dataset.rollback);
+  if(t.dataset.accept)   return employeeAccept(t.dataset.accept, t);
+  if(t.dataset.reject)   return employeeReject(t.dataset.reject, t);
+  if(t.dataset.ack)      return employeeAck(t.dataset.ack, t);
+  if(t.dataset.withdraw) return employeeWithdraw(t.dataset.withdraw, t);
+  if(t.dataset.reopen)   return employeeReopen(t.dataset.reopen, t);
+  if(t.dataset.stageapprove) return reStageApprove(t.dataset.stageapprove, t);
+  if(t.dataset.unstage)  return reUnstage(t.dataset.unstage, t);
+  if(t.dataset.rollback) return rollbackBatch(t.dataset.rollback, t);
 
   if(t.dataset.declinetoggle){
     document.getElementById("dec_" + t.dataset.declinetoggle).classList.add("show");
@@ -2034,7 +2197,7 @@ document.addEventListener("click", ev => {
       toast("no","Reason required","The requester needs to know why the change was not applied.");
       return;
     }
-    reStageDecline(id, reason);
+    reStageDecline(id, reason, t);
     return;
   }
 });

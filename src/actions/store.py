@@ -16,15 +16,6 @@ from typing import Optional
 from ..utils.logger import get_logger
 from .models import STATUS_PENDING, Action
 
-# Fields cleared on a full reset — everything the approval workflow (raise /
-# apply / decline) writes onto an action, so it reads exactly as it did the
-# moment plan_actions() first created it.
-_DECISION_FIELDS = (
-    "applied_at", "result_note", "raised_by", "raised_at",
-    "decided_by", "decided_at", "decline_reason",
-    "staged_by", "staged_at", "commit_batch_id", "committed_at",
-)
-
 log = get_logger("actions.store")
 
 
@@ -73,23 +64,11 @@ class ActionStore:
         """Wipe every action, decided or not. Called when a new pipeline run
         starts so the recommendations list only ever reflects the run in
         progress, instead of accumulating applied/dismissed/declined entries
-        from every run that came before it. Returns the number removed."""
+        from every run that came before it; also used by the test-data reset
+        endpoint to return to a clean slate. Returns the number removed."""
         with self._lock:
             data = self._read()
             self._write({})
-            return len(data)
-
-    def reset_all_to_pending(self) -> int:
-        """Test-only: undo every decision, so the store reads exactly as it did
-        right after the run that planned it — no re-run needed. Returns the
-        number of actions reset."""
-        with self._lock:
-            data = self._read()
-            for raw in data.values():
-                raw["status"] = STATUS_PENDING
-                for field_name in _DECISION_FIELDS:
-                    raw[field_name] = None
-            self._write(data)
             return len(data)
 
     def get(self, action_id: str) -> Optional[Action]:

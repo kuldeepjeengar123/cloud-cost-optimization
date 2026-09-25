@@ -21,18 +21,9 @@ def build_sources(cfg: PipelineConfig) -> list[InputSource]:
         if kind == "local_csv":
             sources.append(LocalCSVSource(cfg.docs_folder, date_range=cfg.date_range))
         elif kind == "cost_explorer":
-            sources.append(CostExplorerSource(
-                region=cfg.aws_region,
-                days=ce_days,
-                use_mock=cfg.aws_use_mock,
-                endpoint_url=cfg.aws_endpoint_url,
-            ))
+            sources.append(CostExplorerSource(region=cfg.aws_region, days=ce_days))
         elif kind == "cloudwatch":
-            sources.append(CloudWatchSource(
-                region=cfg.aws_region,
-                use_mock=cfg.aws_use_mock,
-                endpoint_url=cfg.aws_endpoint_url,
-            ))
+            sources.append(CloudWatchSource(region=cfg.aws_region))
         else:
             log.warning("Unknown source kind: %s (skipping)", kind)
     return sources

@@ -273,6 +273,15 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .btn-quiet:hover{color:var(--text-primary);border-color:var(--axis)}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 
+/* ---------------- in-flight button spinner ---------------- */
+.btn-spinner{
+  display:inline-block;width:12px;height:12px;margin-right:7px;
+  border-radius:50%;border:2px solid currentColor;border-top-color:transparent;
+  vertical-align:-2px;animation:btnspin .6s linear infinite;
+}
+.btn.is-busy{opacity:.8;cursor:wait;pointer-events:none}
+@keyframes btnspin{to{transform:rotate(360deg)}}
+
 /* ---------------- chips / badges ---------------- */
 .chips{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
 .chip{

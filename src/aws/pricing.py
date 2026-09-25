@@ -1,8 +1,8 @@
-"""On-demand hourly prices for the mock EC2 fleet.
+"""On-demand hourly prices for EC2 instance types.
 
-Approximate us-east-1 Linux on-demand rates (USD/hour). Only used to make the
-simulated cost numbers feel realistic — they are NOT billed against anything.
-``resize`` walks the family ladder so "rightsize one tier down" is well-defined.
+Approximate us-east-1 Linux on-demand rates (USD/hour). Used to estimate
+monthly cost/savings for fleet reads and resize previews. ``smaller_type``
+walks the family ladder so "rightsize one tier down" is well-defined.
 """
 
 from __future__ import annotations

@@ -1,9 +1,8 @@
-"""RealAWSClient — the live counterpart to ``mock_aws.client.MockAWSClient``.
+"""RealAWSClient — the boto3-backed client ``AWSExecutor`` (see
+``actions.executor``) drives for every AWS-backed action.
 
-Same method names and same boto3-shaped return values, so ``AWSExecutor``
-never has to know which one it is holding (see ``actions.executor``). Reads
-(``describe_instances``, ``list_budgets``) always run once this client is
-constructed — there is nothing dangerous about looking. Every *mutation*
+Reads (``describe_instances``, ``list_budgets``) always run once this client
+is constructed — there is nothing dangerous about looking. Every *mutation*
 (stop/start/resize/terminate/tag/budget) instead runs through
 ``_guard_write()`` first:
 
@@ -24,7 +23,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..mock_aws import pricing  # generic on-demand price table, not mock-specific
+from . import pricing
 from ..utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -97,7 +96,7 @@ class RealAWSClient:
                         "Placement": inst.get("Placement", {}),
                         "Region": self.cfg.aws_region,
                         "Tags": inst.get("Tags", []),
-                        # Best-effort heuristic cost, same table the mock uses —
+                        # Best-effort heuristic cost from the pricing table —
                         # real per-instance billing needs Cost Explorer's
                         # resource-level data, out of scope for this dry-run
                         # plumbing pass.
@@ -284,6 +283,3 @@ class RealAWSClient:
     def _current_type(self, instance_id: str) -> str | None:
         inst = self._instance_meta(instance_id)
         return inst.get("InstanceType") if inst else None
-
-    def reset(self) -> dict:
-        return {"ok": False, "message": "reset() is a mock-only operation; real AWS has no reset."}

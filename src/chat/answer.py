@@ -92,9 +92,9 @@ report card; each recommendation becomes a pending action.
 
 Human approval flow: an employee reviews a recommendation and can raise it \
 to the RE team's queue; the RE team approves or declines it; only an \
-approval executes — either annotating the source CSV or calling the AWS API \
-(a safe local mock by default) to resize, stop or terminate a resource. \
-Every decision is recorded in an audit log.
+approval executes — either annotating the source CSV or calling the real AWS \
+API (guarded by a write-enable flag and an allowlist) to resize, stop or \
+terminate a resource. Every decision is recorded in an audit log.
 
 Once a run finishes, this assistant switches to answering questions grounded \
 in that run's actual cost data and recommendations.\

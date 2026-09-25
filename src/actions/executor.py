@@ -3,20 +3,22 @@
 ``get_executor(cfg)`` returns the executor selected by ``cfg.action_backend``:
 
     "csv" -> CSVExecutor: annotate the matching row in docs/<table>.csv
-    "aws" -> AWSExecutor: stop/start instances & change config via boto3 (stub)
+    "aws" -> AWSExecutor: stop/start/resize/terminate/tag instances via boto3
 
 Both implement ``apply(action) -> ApplyResult``. The Action descriptor and the
-"Apply" button are identical across backends — only this layer changes when you
-flip from the CSV simulation to real AWS calls.
+"Apply" button are identical across backends — only this layer changes between
+the CSV simulation and real AWS calls.
 """
 
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..aws import pricing
 from ..config import PipelineConfig
 from ..utils.logger import get_logger
 from .models import (
@@ -129,77 +131,134 @@ class CSVExecutor:
 
 
 class AWSExecutor:
-    """Apply an approved recommendation against the AWS API.
+    """Apply an approved recommendation against the real AWS API.
 
-    By default this drives the **mock** AWS server (credential-free), so an
-    approved "stop the idle instance" actually flips that instance to stopped
-    and the next cost read drops — the real-time loop the demo is about. It
-    resolves the recommendation to concrete instances by matching the action's
-    target (instance type / region / project tag) against the live inventory,
-    then picks an operation (stop / resize / terminate / tag / budget) from the
-    recommendation wording.
-
-    With ``aws_use_mock=False`` it drives :class:`aws.real_client.RealAWSClient`
-    — real reads always run; every real *write* additionally requires
-    ``cfg.aws_allow_real_writes`` or it comes back as a logged dry-run (see
-    that module's docstring for the full guardrail).
+    Drives :class:`aws.real_client.RealAWSClient` — real reads always run;
+    every real *write* additionally requires ``cfg.aws_allow_real_writes`` or
+    it comes back as a logged dry-run (see that module's docstring for the
+    full guardrail). It resolves the recommendation to concrete instances by
+    matching the action's target (instance type / region / project tag)
+    against the live inventory, then picks an operation (stop / resize /
+    terminate / tag / budget) from the recommendation wording.
     """
 
     backend = "aws"
 
     # recommendation keyword -> operation. Order matters (first hit wins).
+    # "replace"/"modify"/"larger"/"bigger" are here because an LLM routinely
+    # phrases a rightsizing as "Replace t3.nano instances with a larger
+    # burstable type" — wording that names no resize verb at all and used to
+    # fall through to the "stop" default, i.e. shut the instance down instead
+    # of resizing it.
     _OP_KEYWORDS = [
         (("terminat", "delete", "remove", "decommission", "unused"), "terminate"),
-        (("resize", "rightsize", "right-size", "downsize", "smaller", "right size"), "resize"),
+        (("resize", "rightsize", "right-size", "downsize", "upsize", "upgrade", "smaller",
+          "right size", "replace", "modify", "larger", "bigger"), "resize"),
         (("stop", "shut", "idle", "pause", "turn off", "power off"), "stop"),
         (("tag", "allocation"), "tag"),
         (("budget", "anomaly", "alert", "threshold"), "budget"),
     ]
 
+    # Matches AWS instance-type tokens like "t3.nano", "m5.2xlarge" anywhere in
+    # a recommendation's free-text title.
+    _INSTANCE_TYPE_RE = re.compile(r"\b[a-z][0-9][a-z]?\.[a-z0-9]+\b", re.IGNORECASE)
+
     def __init__(self, cfg: PipelineConfig):
         self.cfg = cfg
-        if cfg.aws_use_mock:
-            from ..mock_aws.client import MockAWSClient
-            self._client = MockAWSClient(cfg.aws_endpoint_url)
-        else:
-            from ..aws.real_client import RealAWSClient
-            self._client = RealAWSClient(cfg)
+        from ..aws.real_client import RealAWSClient
+        self._client = RealAWSClient(cfg)
+        self._inventory_snapshot: list[dict] | None = None
+
+    def inventory(self, refresh: bool = False) -> list[dict]:
+        """The live instance list, read once and reused.
+
+        Planning a run previews and risk-assesses every recommendation, and
+        each of those resolves its targets against the fleet — reading AWS
+        afresh per action turned one run into dozens of round trips. Reusing
+        one snapshot per executor makes that a single call, and has every
+        preview in a run agree on the same view of the fleet instead of each
+        seeing a slightly different one. Mutating paths (``apply``) pass
+        ``refresh=True``: once a change lands, the snapshot is stale by
+        definition.
+        """
+        if refresh or self._inventory_snapshot is None:
+            self._inventory_snapshot = self._client.describe_instances()["Reservations"][0]["Instances"]
+        return self._inventory_snapshot
 
     def _op_for(self, title: str) -> str:
         low = title.lower()
         for keywords, op in self._OP_KEYWORDS:
             if any(k in low for k in keywords):
                 return op
+        # No verb matched. If the text names an instance type it is almost
+        # certainly about changing that type, so resize rather than stop —
+        # stopping an instance nobody asked to stop is both wrong and the
+        # more destructive guess of the two.
+        if self._INSTANCE_TYPE_RE.search(title):
+            return "resize"
         return "stop"  # most universal cost reducer
 
-    def _match_instances(self, action: Action, inventory: list[dict]) -> list[dict]:
+    def _resize_target(self, title: str, current_type: str) -> str | None:
+        """The instance type a resize should land on, inferred from the
+        recommendation text. When the title names another instance type
+        besides the current one (e.g. "...resize t3.nano to t3.micro..."),
+        that's the target — this works for an upsize or a downsize alike,
+        not just "one tier down". A recommendation sometimes lists more than
+        one candidate ("...to a larger type (e.g., t3.micro or t3.small)");
+        when that happens, prefer whichever candidate is actually allowed by
+        ``aws_write_allowed_instance_types`` (so a merely-mentioned but
+        disallowed size doesn't get chosen over the intended one), else fall
+        back to the first one named. Falls back to the family ladder's next
+        smaller size when the text names no explicit target at all."""
+        tokens = [
+            t for t in self._INSTANCE_TYPE_RE.findall(title)
+            if t.lower() != (current_type or "").lower()
+        ]
+        if not tokens:
+            return pricing.smaller_type(current_type)
+        allowed = {t.lower() for t in self.cfg.aws_write_allowed_instance_types}
+        if allowed:
+            preferred = [t for t in tokens if t.lower() in allowed]
+            if preferred:
+                return preferred[0]
+        return tokens[0]
+
+    # Ops that are valid against a stopped instance too. A "resize" in
+    # particular *requires* the instance to be stopped before AWS will accept
+    # the instance-type change (see RealAWSClient.resize_instance's own
+    # stop -> modify -> start sequence) — an already-stopped instance is the
+    # normal case here, not an edge case, so it must still be matched as a
+    # target instead of silently resolving to zero instances.
+    _STOPPED_OK_OPS = {"resize", "tag"}
+
+    def _match_instances(self, action: Action, inventory: list[dict], op: str = "") -> list[dict]:
         col, val = action.match_column, (action.match_value or "").lower()
 
         def tag(inst, key):
             return next((t["Value"] for t in inst.get("Tags", []) if t["Key"] == key), "")
 
-        running = [i for i in inventory if i.get("State", {}).get("Name") == "running"]
+        states = {"running", "stopped"} if op in self._STOPPED_OK_OPS else {"running"}
+        eligible = [i for i in inventory if i.get("State", {}).get("Name") in states]
+        if col == "instance_id":
+            return [i for i in eligible if i.get("InstanceId", "").lower() == val]
         if col == "instance_type":
-            return [i for i in running if i.get("InstanceType", "").lower() == val]
+            return [i for i in eligible if i.get("InstanceType", "").lower() == val]
         if col == "region":
-            return [i for i in running if i.get("Region", "").lower() == val]
+            return [i for i in eligible if i.get("Region", "").lower() == val]
         if col in ("project_tag", "project"):
-            return [i for i in running if tag(i, "Project").lower() == val]
+            return [i for i in eligible if tag(i, "Project").lower() == val]
         if col == "service" and ("ec2" in val or "compute" in val):
-            return running  # service-level EC2 recommendation -> whole fleet
+            return eligible  # service-level EC2 recommendation -> whole fleet
         # last resort: substring match against any visible field
-        return [i for i in running
+        return [i for i in eligible
                 if val and (val in i.get("InstanceType", "").lower()
                             or val in i.get("Region", "").lower()
                             or val in tag(i, "Project").lower())]
 
     def _ensure_reachable(self) -> bool:
-        """Mock: auto-start/verify the local server. Real: always True — a
-        real client's own calls surface their own connectivity errors."""
-        if not self.cfg.aws_use_mock:
-            return True
-        from ..mock_aws.client import ensure_mock_server
-        return ensure_mock_server(self.cfg.aws_endpoint_url)
+        """Always True — the real client's own calls surface their own
+        connectivity errors."""
+        return True
 
     def matched_instances(self, action: Action) -> list[dict]:
         """Full instance dicts (with Tags) an action would touch — used by the
@@ -208,13 +267,13 @@ class AWSExecutor:
         if not self._ensure_reachable():
             return []
         try:
-            inventory = self._client.describe_instances()["Reservations"][0]["Instances"]
+            inventory = self.inventory()
         except Exception as exc:
             log.warning("Could not read the fleet for %s (%s)", action.id, exc)
             return []
         if not action.op:
             action.op = self._op_for(action.title)
-        return self._match_instances(action, inventory)
+        return self._match_instances(action, inventory, action.op)
 
     def preview(self, action: Action) -> dict:
         """Read-only plan: which op, which instances, which calls, roughly how
@@ -231,11 +290,11 @@ class AWSExecutor:
         if not self._ensure_reachable():
             return empty
         try:
-            inventory = self._client.describe_instances()["Reservations"][0]["Instances"]
+            inventory = self.inventory()
         except Exception as exc:
             log.warning("Could not read the fleet for preview of %s (%s)", action.id, exc)
             return empty
-        targets = self._match_instances(action, inventory)
+        targets = self._match_instances(action, inventory, op)
         calls, saved = [], 0.0
         for inst in targets:
             iid = inst["InstanceId"]
@@ -247,9 +306,11 @@ class AWSExecutor:
                 calls.append(f"POST /aws/ec2/instances/{iid}/stop")
                 calls.append(f"POST /aws/ec2/instances/{iid}/resize")
                 calls.append(f"POST /aws/ec2/instances/{iid}/start")
-                from ..mock_aws import pricing
-                smaller = pricing.smaller_type(inst.get("InstanceType", ""))
-                saved += max(0.0, cost - pricing.monthly(smaller)) if smaller else 0.0
+                target_type = self._resize_target(action.title, inst.get("InstanceType", ""))
+                # Not clamped to >=0: an upsize (e.g. an undersized t3.nano ->
+                # t3.micro) costs a little more, not less — the RE reviewer
+                # should see that honestly rather than have it hidden as $0.
+                saved += (cost - pricing.monthly(target_type)) if target_type else 0.0
             elif op == "tag":
                 calls.append(f'POST /aws/ec2/instances/{iid}/tags  {{"CostOptimized":"true"}}')
             else:  # stop
@@ -259,12 +320,6 @@ class AWSExecutor:
                 "calls": calls, "estimated_savings": round(saved, 2)}
 
     def apply(self, action: Action) -> ApplyResult:
-        if not self._ensure_reachable():
-            msg = (f"Mock AWS not reachable at {self.cfg.aws_endpoint_url} and "
-                   f"could not be auto-started. Try `python mock_aws.py`.")
-            action.result_note = msg
-            return ApplyResult(False, msg, action)
-
         op = self._op_for(action.title)
 
         # Budget/anomaly recommendations aren't instance-specific.
@@ -279,16 +334,18 @@ class AWSExecutor:
             return self._finish(action, True, f"Set budget alert (EC2 > $100/mo). {res.get('message', '')}")
 
         try:
-            inventory = self._client.describe_instances()["Reservations"][0]["Instances"]
+            # Always fresh: an earlier action in the same commit batch may
+            # have already stopped/resized/terminated something.
+            inventory = self.inventory(refresh=True)
         except Exception as exc:
             msg = f"Could not read the fleet ({exc}); left staged for retry."
             action.result_note = msg
             return ApplyResult(False, msg, action)
-        targets = self._match_instances(action, inventory)
+        targets = self._match_instances(action, inventory, op)
         if not targets:
             action.status = STATUS_ACKNOWLEDGED
             action.applied_at = _now()
-            action.result_note = (f"No matching live instances for "
+            action.result_note = (f"No matching instances for "
                                    f"{action.match_column}='{action.match_value}'. Acknowledged.")
             return ApplyResult(True, action.result_note, action)
 
@@ -298,7 +355,8 @@ class AWSExecutor:
             if op == "terminate":
                 res = self._client.terminate_instance(iid)
             elif op == "resize":
-                res = self._client.resize_instance(iid)  # one tier down
+                target_type = self._resize_target(action.title, inst.get("InstanceType", ""))
+                res = self._client.resize_instance(iid, instance_type=target_type)
             elif op == "tag":
                 res = self._client.tag_instance(iid, {"CostOptimized": "true"})
             else:

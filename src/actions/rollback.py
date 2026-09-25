@@ -11,7 +11,7 @@ Reversibility by op:
     stop      -> start the instance back up
     resize    -> resize back to the pre-change instance type
     tag       -> restore the pre-change values of the tag keys that changed
-    terminate -> irreversible (the instance no longer exists in the mock/real
+    terminate -> irreversible (the instance no longer exists in the real
                  fleet); recorded with reversible=False and surfaced as such
     budget    -> no instance target; nothing to roll back
 """
@@ -121,10 +121,6 @@ def rollback_batch(
     from .executor import get_executor
 
     executor = get_executor(cfg, backend="aws")
-    if cfg.aws_use_mock:
-        from ..mock_aws.client import ensure_mock_server
-
-        ensure_mock_server(cfg.aws_endpoint_url)
     client = getattr(executor, "_client", None)
 
     results = []

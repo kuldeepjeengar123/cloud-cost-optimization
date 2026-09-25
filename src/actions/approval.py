@@ -10,7 +10,7 @@ dashboard needs:
                               \\--stage(decline)--> staged_decline --commit_batch--> declined
                                                                          |
                                                           commit_batch --/--> applied/acknowledged
-                                                                              (CSV written, or AWS/mock called)
+                                                                              (CSV written, or AWS called)
 
 Staging a decision never touches AWS or a CSV — it only records RE intent.
 ``commit_batch()`` is the *only* function in this codebase that ever calls an
@@ -196,7 +196,7 @@ def commit_status(store: ActionStore) -> dict:
 
 def commit_batch(cfg: PipelineConfig, store: ActionStore, decision_log: DecisionLogStore, decided_by: str) -> dict:
     """Apply every staged decision as one batch — the only path from a staged
-    intent to a real AWS/mock call or CSV write.
+    intent to a real AWS call or CSV write.
 
     Refuses outright while any request in the queue is still ``pending_re``:
     the RE team must decide (approve or decline) every open request first, so
