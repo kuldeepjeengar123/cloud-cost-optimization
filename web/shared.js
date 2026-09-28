@@ -654,23 +654,17 @@ function renderChartSpec(host, legendHost, tableHost, spec){
    uses viewBox="0 0 100 100" with preserveAspectRatio="none" so it stretches
    to exactly match the percentage-positioned node overlay at any width.
    ========================================================================= */
+// Topology only — which row a step sits on and what follows what. Columns are
+// NOT fixed here: they are derived per call from whichever steps the caller
+// actually passes in (see computeFlowLayout), so omitting a step re-flows the
+// chart instead of leaving a hole where it used to be and edges pointing at
+// nothing. Rows map to the three bands in FLOW_ROW_Y.
 const FLOW_LAYOUT = {
-  // 10 evenly-spaced columns (7% margin each side) and 3 rows (18/50/82) —
-  // spacing is chosen so that, combined with .flowchart's min-width and
-  // .flow-node's fixed pixel width in shared.css, adjacent same-row nodes
-  // never overlap and top/bottom-row nodes never clip the container edge.
-  positions: {
-    inputs:         {x:7,     y:50},
-    step1:          {x:16.56, y:50},
-    step2:          {x:26.11, y:50},
-    forecast:       {x:35.67, y:50},
-    tag_governance: {x:45.22, y:50},
-    root_cause:     {x:54.78, y:50},
-    step3_1:        {x:64.33, y:18},
-    step3_2:        {x:64.33, y:82},
-    step3_3:        {x:73.89, y:82},
-    step4:          {x:83.44, y:50},
-    step5:          {x:93,    y:50},
+  rows: {
+    inputs:"mid", step1:"mid", step2:"mid",
+    forecast:"mid", tag_governance:"mid", root_cause:"mid",
+    step3_1:"top", step3_2:"bottom", step3_3:"bottom",
+    step4:"mid", step5:"mid",
   },
   edges: [
     ["inputs","step1"], ["step1","step2"],
@@ -681,6 +675,67 @@ const FLOW_LAYOUT = {
     ["step4","step5"],
   ],
 };
+const FLOW_ROW_Y = {top:18, mid:50, bottom:82};
+const FLOW_COL_W = 170;   // px per column: 104px node + breathing room
+const FLOW_MIN_W = 680;
+
+/* Lay out only the steps the caller asked for.
+
+   Two things make this adaptive rather than a fixed table: an edge pointing at
+   an omitted step is re-threaded to that step's own successors (so the chain
+   stays unbroken across a gap), and each node's column comes from its longest
+   path from a root, then columns are spread evenly between the margins. Drop
+   any step from the list and the result stays connected and evenly spaced. */
+function computeFlowLayout(stepDefs){
+  const present = stepDefs.map(d => d.key);
+  const presentSet = new Set(present);
+
+  const out = new Map();
+  FLOW_LAYOUT.edges.forEach(([f, t]) => {
+    if(!out.has(f)) out.set(f, []);
+    out.get(f).push(t);
+  });
+
+  // Nearest rendered successor(s) of a target, stepping over omitted nodes.
+  const resolve = (key, seen) => {
+    if(presentSet.has(key)) return [key];
+    if(seen.has(key)) return [];
+    seen.add(key);
+    return (out.get(key) || []).flatMap(n => resolve(n, seen));
+  };
+
+  const edges = [], seenEdge = new Set();
+  present.forEach(f => (out.get(f) || []).forEach(t => {
+    resolve(t, new Set()).forEach(r => {
+      const id = `${f}>${r}`;
+      if(r !== f && !seenEdge.has(id)){ seenEdge.add(id); edges.push([f, r]); }
+    });
+  }));
+
+  // Longest-path depth. Small DAG, so relaxing until nothing moves is plenty.
+  const depth = Object.fromEntries(present.map(k => [k, 0]));
+  for(let i = 0; i < present.length; i++){
+    let changed = false;
+    edges.forEach(([f, t]) => {
+      if(depth[t] < depth[f] + 1){ depth[t] = depth[f] + 1; changed = true; }
+    });
+    if(!changed) break;
+  }
+
+  const maxCol = present.length ? Math.max(...present.map(k => depth[k])) : 0;
+  const L = 7, R = 93;
+  const positions = {};
+  present.forEach(k => {
+    positions[k] = {
+      x: maxCol ? L + (depth[k] * (R - L)) / maxCol : (L + R) / 2,
+      y: FLOW_ROW_Y[FLOW_LAYOUT.rows[k]] || FLOW_ROW_Y.mid,
+    };
+  });
+  // Canvas widens with the column count instead of always being full width, so
+  // a shorter pipeline gets a compact chart rather than a lot of empty canvas.
+  const width = Math.max(FLOW_MIN_W, (maxCol + 1) * FLOW_COL_W);
+  return {positions, edges, width};
+}
 let flowInstanceCounter = 0;
 
 function flowEdgePath(a, b){
@@ -696,13 +751,13 @@ function flowEdgePath(a, b){
    before) so callers only need to swap the builder, not their event logic.
    Call refreshEdges() after any node's data-state changes to "done" so the
    edge leaving it lights up. */
-const FLOW_BASE_W = 1260, FLOW_BASE_H = 280;
+const FLOW_BASE_H = 280;   // width is per-chart now — see computeFlowLayout
 const FLOW_ZOOM_MIN = 0.5, FLOW_ZOOM_MAX = 1.5, FLOW_ZOOM_STEP = 0.1;
 
 function buildFlowchart(host, stepDefs){
   const markerId = `flowArrow${flowInstanceCounter++}`;
-  const pos = FLOW_LAYOUT.positions;
-  const edgesHtml = FLOW_LAYOUT.edges.map(([f,t]) => {
+  const {positions: pos, edges, width: baseW} = computeFlowLayout(stepDefs);
+  const edgesHtml = edges.map(([f,t]) => {
     const a = pos[f], b = pos[t];
     if(!a || !b) return "";
     return `<path class="flow-edge" data-from="${f}" data-to="${t}" d="${flowEdgePath(a,b)}" marker-end="url(#${markerId})"/>`;
@@ -721,8 +776,8 @@ function buildFlowchart(host, stepDefs){
       <span class="flow-zoom-label">100%</span>
       <button type="button" class="flow-zoom-btn" data-zoom="in" aria-label="Zoom in">+</button>
     </div>
-    <div class="flow-scroll"><div class="flow-zoom-sizer" style="width:${FLOW_BASE_W}px;height:${FLOW_BASE_H}px">
-    <div class="flowchart">
+    <div class="flow-scroll"><div class="flow-zoom-sizer" style="width:${baseW}px;height:${FLOW_BASE_H}px">
+    <div class="flowchart" style="width:${baseW}px;height:${FLOW_BASE_H}px">
     <svg class="flow-edges" viewBox="0 0 100 100" preserveAspectRatio="none">
       <defs><marker id="${markerId}" viewBox="0 0 10 10" refX="8" refY="5"
         markerWidth="5" markerHeight="5" orient="auto-start-reverse">
@@ -743,7 +798,7 @@ function buildFlowchart(host, stepDefs){
   const zoomLabel = host.querySelector(".flow-zoom-label");
   function applyZoom(){
     flowchartEl.style.transform = `scale(${zoom})`;
-    sizerEl.style.width = `${FLOW_BASE_W * zoom}px`;
+    sizerEl.style.width = `${baseW * zoom}px`;
     sizerEl.style.height = `${FLOW_BASE_H * zoom}px`;
     zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
   }

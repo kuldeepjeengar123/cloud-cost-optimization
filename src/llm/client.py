@@ -138,23 +138,28 @@ class LLMClient:
         the provider, a network error) isn't a key problem, so it's raised
         right away rather than burning through the fallback key too.
         """
-        last_err: Exception | None = None
+        # Every key's own failure is kept, not just the last one. Reporting
+        # only the last is actively misleading when the keys fail differently
+        # — a primary that is merely rate-limited (429) followed by a bad
+        # fallback key (401) reads as an authentication problem, sending you
+        # after the wrong cause entirely.
+        failures: list[str] = []
         for i, key in enumerate(self._keys):
             headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
             try:
                 resp = requests.post(self.cfg.base_url, headers=headers, json=payload, stream=stream, timeout=120)
             except requests.RequestException as exc:
-                last_err = exc
+                failures.append(f"key #{i + 1}: {exc}")
                 log.warning("OpenRouter request failed (%s); trying the next configured key if any.", exc)
                 continue
             if resp.status_code == 200:
                 return resp
-            last_err = LLMError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+            failures.append(f"key #{i + 1}: HTTP {resp.status_code}: {resp.text[:200]}")
             if resp.status_code in self._KEY_FALLBACK_STATUSES and i + 1 < len(self._keys):
                 log.warning("OpenRouter key rejected (HTTP %s); trying the next configured key.", resp.status_code)
                 continue
             break
-        raise last_err
+        raise LLMError("; ".join(failures) or "no configured API key produced a response")
 
     def _non_stream(self, payload: dict) -> str:
         resp = self._request(payload, stream=False)

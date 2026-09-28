@@ -113,7 +113,7 @@
         <div class="filters" style="margin-top:12px">
           <span class="fl">Target</span>
           <span class="chip mono" id="runTargetLabel">local_csv</span>
-          <span style="font-size:11.5px;color:var(--text-muted)">Set from the Target dropdown in the header above.</span>
+          <span style="font-size:12.5px;color:var(--text-muted)">Set from the Target dropdown in the header above.</span>
           <span class="fl">Date range</span>
           <select id="runDateRange" aria-label="Date range">
             <option value="" selected>All available data</option>
@@ -214,44 +214,6 @@
         <p class="chart-foot" id="footRegion">Source: <span class="mono">correlations.region_cost__by_region</span></p>
       </div>
 
-      <div class="chart-card">
-        <div class="chart-head">
-          <div>
-            <h3>Cost forecast</h3>
-            <p class="csub" id="captionForecast">Waiting on a pipeline run.</p>
-          </div>
-          <button class="tv-toggle" data-table="tblForecast" aria-pressed="false" type="button">Table</button>
-        </div>
-        <div class="plot" id="chartForecast"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
-        <div class="table-view" id="tblForecast" hidden></div>
-        <p class="chart-foot" id="footForecast">Source: <span class="mono">analysis.forecast</span></p>
-      </div>
-
-      <div class="chart-card">
-        <div class="chart-head">
-          <div>
-            <h3>Tag governance</h3>
-            <p class="csub" id="captionTagGov">Waiting on a pipeline run.</p>
-          </div>
-          <button class="tv-toggle" data-table="tblTagGov" aria-pressed="false" type="button">Table</button>
-        </div>
-        <div class="plot" id="chartTagGov"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
-        <div class="table-view" id="tblTagGov" hidden></div>
-        <p class="chart-foot" id="footTagGov">Source: <span class="mono">analysis.tag_findings</span></p>
-      </div>
-
-      <div class="chart-card">
-        <div class="chart-head">
-          <div>
-            <h3>Anomaly root cause</h3>
-            <p class="csub" id="captionRootCause">Waiting on a pipeline run.</p>
-          </div>
-          <button class="tv-toggle" data-table="tblRootCause" aria-pressed="false" type="button">Table</button>
-        </div>
-        <div class="plot" id="chartRootCause"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
-        <div class="table-view" id="tblRootCause" hidden></div>
-        <p class="chart-foot" id="footRootCause">Source: <span class="mono">analysis.anomalies[].drivers</span></p>
-      </div>
     </div>
 
     <div class="section-head">
@@ -357,8 +319,8 @@
         <div class="feed" id="logBody"></div>
       </div>
       <div class="card">
-        <div class="lh" style="padding:0 0 12px;border:0"><h3 style="font-size:13.5px;font-weight:630;margin:0">Approval flow</h3>
-          <p style="margin:3px 0 0;font-size:11.5px;color:var(--text-muted)">Highlights once any recommendation reaches that stage.</p></div>
+        <div class="lh" style="padding:0 0 12px;border:0"><h3 style="font-size:14.5px;font-weight:630;margin:0">Approval flow</h3>
+          <p style="margin:3px 0 0;font-size:12.5px;color:var(--text-muted)">Highlights once any recommendation reaches that stage.</p></div>
         <div class="flow-rail" id="flowRail"></div>
       </div>
     </div>
@@ -371,7 +333,7 @@
 <script>
 "use strict";
 const {esc, money, money2, compactMoney, toast, hoverable, ICON, IMPACT_ICON, BAND,
-       renderTable, renderLegend, hbarChart, columnChart, lineChart, fleetScatter, fleetLegendItems, fmtTime,
+       renderTable, renderLegend, hbarChart, columnChart, fleetScatter, fleetLegendItems, fmtTime,
        fmtStepElapsed} = Shared;
 
 /* =========================================================================
@@ -727,9 +689,10 @@ const RUN_STEP_DEFS = [
   {key:"inputs",         name:"Loading input sources"},
   {key:"step1",          name:"Simplify & Normalize (LLM)"},
   {key:"step2",          name:"Context Load"},
-  {key:"forecast",       name:"Cost Forecast"},
-  {key:"tag_governance", name:"Tag Governance"},
-  {key:"root_cause",     name:"Anomaly Root Cause"},
+  // Cost Forecast / Tag Governance / Anomaly Root Cause are deliberately not
+  // listed: their charts were removed, so their progress is not worth a node.
+  // The pipeline still emits those events — runStepStart/runStepDone ignore
+  // any key with no node, so nothing breaks by leaving them out.
   {key:"step3_1",        name:"Generate Charts (LLM)"},
   {key:"step3_2",        name:"Analysis & Metrics (LLM)"},
   {key:"step3_3",        name:"Executive Summary (LLM)"},
@@ -845,58 +808,14 @@ function renderFinalReport(result){
       <div class="rr-kpi-grid">${totalCard}${kpiCards}</div>
       <p class="csub" style="margin-top:9px">Charts below (Where the money goes, Daily spend, Cost by region) now reflect this run.</p>
     </div>
-    ${findingsHtml}${anomaliesHtml}${trendsHtml}${recsHtml}${nextStepsHtml}
-    <div class="rr-section">
-      <h4>Ask a follow-up</h4>
-      <form class="followup-form" style="display:flex;gap:8px;align-items:flex-start">
-        <textarea class="followup-input" rows="2" style="flex:1;resize:vertical;min-height:38px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;background:var(--surface)" placeholder="e.g. which region cost the most, and why?"></textarea>
-        <button class="btn btn-quiet" type="submit">Ask</button>
-      </form>
-      <div class="followup-answer" style="margin-top:10px" hidden></div>
-    </div>`;
+    ${findingsHtml}${anomaliesHtml}${trendsHtml}${recsHtml}${nextStepsHtml}`;
   host.hidden = false;
-  wireFollowUp(host);
 
   const provCharts = document.getElementById("provCharts");
   if(provCharts){
     provCharts.innerHTML = `<b>Charts above</b> reflect run <span class="mono">${esc(latestPipelinePayload.run_id || "latest")}</span>` +
       (bm.total_cost_observed != null ? ` — $${Number(bm.total_cost_observed).toFixed(2)} observed` : "");
   }
-}
-
-function wireFollowUp(host){
-  const form = host.querySelector(".followup-form");
-  const input = host.querySelector(".followup-input");
-  const answerEl = host.querySelector(".followup-answer");
-  if(!form || !input || !answerEl) return;
-
-  form.addEventListener("submit", async ev => {
-    ev.preventDefault();
-    const question = input.value.trim();
-    if(!question) return;
-    const btn = form.querySelector("button");
-    btn.disabled = true;
-    answerEl.hidden = false;
-    answerEl.className = "followup-answer outcome wait";
-    answerEl.innerHTML = `${ICON.clock}<div><span class="oh">Thinking…</span></div>`;
-    try{
-      const res = await fetch("/api/chat", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({question})
-      });
-      const data = await res.json();
-      answerEl.className = "followup-answer outcome ok";
-      const citations = (data.citations||[]).length
-        ? `<p class="ob">Based on: ${esc(data.citations.join(", "))}</p>` : "";
-      answerEl.innerHTML = `${ICON.check}<div><div class="oh md">${Shared.renderMarkdown(data.answer || "No answer.")}</div>${citations}</div>`;
-    }catch(e){
-      answerEl.className = "followup-answer outcome no";
-      answerEl.innerHTML = `${ICON.x}<div><span class="oh">Request failed: ${esc(e.message || String(e))}</span></div>`;
-    }finally{
-      btn.disabled = false;
-      input.value = "";
-    }
-  });
 }
 
 async function startPipelineRun(){
@@ -1133,9 +1052,6 @@ function renderEmployee(){
   drawDailyChart();
   drawFleetChart();
   drawRegionChart();
-  drawForecastChart();
-  drawTagGovernanceChart();
-  drawRootCauseChart();
 
   const counts = {
     open: open.length, pending_re: pending.length, applied: applied.length,
@@ -1214,9 +1130,9 @@ function recCard(r){
   const savingLine = r.savings > 0
     ? `<div class="sv">${money2(r.savings)}</div><div class="sl">saved / month</div>`
     : r.exposure
-      ? `<div class="sv" style="font-size:16px;color:var(--text-secondary)">${money(r.exposure)}</div>
+      ? `<div class="sv" style="font-size:17px;color:var(--text-secondary)">${money(r.exposure)}</div>
          <div class="sl">exposure capped / month</div>`
-      : `<div class="sv" style="font-size:16px;color:var(--text-secondary)">—</div>
+      : `<div class="sv" style="font-size:17px;color:var(--text-secondary)">—</div>
          <div class="sl">no direct saving</div>`;
 
   let footer = "";
@@ -1225,11 +1141,11 @@ function recCard(r){
       ? `<div class="actions">
            <button class="btn btn-primary" data-accept="${r.id}" type="button">Accept — raise to RE team</button>
            <button class="btn btn-danger" data-reject="${r.id}" type="button">Reject</button>
-           <span style="font-size:11.5px;color:var(--text-muted)">Accepting sends a request. Nothing touches AWS until the RE team approves it.</span>
+           <span style="font-size:12.5px;color:var(--text-muted)">Accepting sends a request. Nothing touches AWS until the RE team approves it.</span>
          </div>`
       : `<div class="actions">
            <button class="btn btn-quiet" data-ack="${r.id}" type="button">Acknowledge</button>
-           <span style="font-size:11.5px;color:var(--text-muted)">Manual recommendation — there is no resource to change, so it is never sent for approval.</span>
+           <span style="font-size:12.5px;color:var(--text-muted)">Manual recommendation — there is no resource to change, so it is never sent for approval.</span>
          </div>`;
   } else if(r.status === ST.PENDING_RE){
     footer = `
@@ -1466,105 +1382,6 @@ function drawRegionChart(){
     `Source: <span class="mono">correlations.region_cost__by_region</span> — run ${esc((latestPipelinePayload && latestPipelinePayload.run_id) || "latest")}`;
 }
 
-/* ---- chart draws: Cost Forecast / Tag Governance / Anomaly Root Cause agents ---- */
-function drawForecastChart(){
-  const payload = latestPipelinePayload;
-  if(!payload){
-    return chartEmptyState("chartForecast","tblForecast","captionForecast","footForecast",
-      `Source: <span class="mono">analysis.forecast</span>`);
-  }
-  const forecast = (payload.analysis && payload.analysis.forecast) || {};
-  const daily = pipelineDailySeries(payload);
-  if(!daily.length || forecast.days_observed == null){
-    document.getElementById("chartForecast").innerHTML =
-      `<div class="empty">Not enough daily cost history to forecast a trend for this run (needs 6+ days).</div>`;
-    document.getElementById("tblForecast").innerHTML = "";
-    document.getElementById("captionForecast").textContent = "Needs at least 6 days of daily cost history.";
-    document.getElementById("footForecast").innerHTML = `Source: <span class="mono">analysis.forecast</span>`;
-    return;
-  }
-  lineChart(document.getElementById("chartForecast"), daily, {aria:"Daily spend trend feeding the forecast"});
-  renderTable(document.getElementById("tblForecast"),
-    [{label:"Metric"},{label:"Value"}],
-    [
-      ["Days observed", forecast.days_observed],
-      ["Prior period daily avg", money2(forecast.prior_period_daily_avg)],
-      ["Recent period daily avg", money2(forecast.recent_period_daily_avg)],
-      ["Trend", `${forecast.trend_pct > 0 ? "+" : ""}${forecast.trend_pct}%`],
-      ["Projected next 30 days", money2(forecast.projected_30d_total)],
-    ]);
-  const dir = forecast.trend_pct > 0 ? "Up" : forecast.trend_pct < 0 ? "Down" : "Flat";
-  document.getElementById("captionForecast").textContent =
-    `${dir} ${Math.abs(forecast.trend_pct)}% vs. the prior period` +
-    (forecast.flag ? " — material growth, worth investigating." : ".") +
-    ` Projected next 30 days: ${money2(forecast.projected_30d_total)}.`;
-  document.getElementById("footForecast").innerHTML =
-    `Source: <span class="mono">analysis.forecast</span> — run ${esc(payload.run_id || "latest")}`;
-}
-function drawTagGovernanceChart(){
-  const payload = latestPipelinePayload;
-  if(!payload){
-    return chartEmptyState("chartTagGov","tblTagGov","captionTagGov","footTagGov",
-      `Source: <span class="mono">analysis.tag_findings</span>`);
-  }
-  const findings = (payload.analysis && payload.analysis.tag_findings) || [];
-  if(!findings.length){
-    document.getElementById("chartTagGov").innerHTML =
-      `<div class="empty">No tag-governance issues found — every resource in this run carries its cost-allocation tag.</div>`;
-    document.getElementById("tblTagGov").innerHTML = "";
-    document.getElementById("captionTagGov").textContent = "Nothing to flag for this run.";
-    document.getElementById("footTagGov").innerHTML = `Source: <span class="mono">analysis.tag_findings</span>`;
-    return;
-  }
-  const data = findings.map(f => [f.table, f.cost_exposed || 0]);
-  const total = data.reduce((s,d) => s + d[1], 0);
-  const rows = findings.reduce((s,f) => s + (f.rows_affected || 0), 0);
-  hbarChart(document.getElementById("chartTagGov"), data,
-            {total, labelW:140, aria:"Untagged spend by table", costLabel:"Untagged spend"});
-  renderTable(document.getElementById("tblTagGov"),
-    [{label:"Table"},{label:"Missing tag"},{label:"Rows", num:true},{label:"Exposed $", num:true},{label:"Severity"}],
-    findings.map(f => [f.table, f.tag_column, f.rows_affected, money2(f.cost_exposed), f.severity]));
-  document.getElementById("captionTagGov").textContent =
-    `${money2(total)} across ${rows} row(s) cannot be allocated to a project or owner.`;
-  document.getElementById("footTagGov").innerHTML =
-    `Source: <span class="mono">analysis.tag_findings</span> — run ${esc(payload.run_id || "latest")}`;
-}
-function drawRootCauseChart(){
-  const payload = latestPipelinePayload;
-  if(!payload){
-    return chartEmptyState("chartRootCause","tblRootCause","captionRootCause","footRootCause",
-      `Source: <span class="mono">analysis.anomalies[].drivers</span>`);
-  }
-  const anomalies = ((payload.analysis && payload.analysis.anomalies) || [])
-    .filter(a => typeof a.cost === "number" && typeof a.avg === "number");
-  if(!anomalies.length){
-    document.getElementById("chartRootCause").innerHTML =
-      `<div class="empty">No statistically detected cost spikes for this run.</div>`;
-    document.getElementById("tblRootCause").innerHTML = "";
-    document.getElementById("captionRootCause").textContent = "No anomalies detected for this run.";
-    document.getElementById("footRootCause").innerHTML = `Source: <span class="mono">analysis.anomalies[].drivers</span>`;
-    return;
-  }
-  const top = [...anomalies].sort((a,b) => (b.cost - b.avg) - (a.cost - a.avg)).slice(0,8);
-  const data = top.map(a => [
-    `${a.table || ""}${a.dimension ? " · " + a.dimension : ""} (${a.date || ""})`,
-    a.cost
-  ]);
-  hbarChart(document.getElementById("chartRootCause"), data,
-            {labelW:200, aria:"Top cost anomalies", costLabel:"Spike-day cost"});
-  renderTable(document.getElementById("tblRootCause"),
-    [{label:"Anomaly"},{label:"Spike cost", num:true},{label:"Normal avg", num:true},{label:"Likely driver"}],
-    top.map(a => [
-      a.finding || "", money2(a.cost), money2(a.avg),
-      (a.drivers && a.drivers.length) ? `${a.drivers[0].value} (${a.drivers[0].dimension}, +${a.drivers[0].pct_above_own_avg}%)` : "—"
-    ]));
-  const withDrivers = top.find(a => a.drivers && a.drivers.length);
-  document.getElementById("captionRootCause").textContent = withDrivers
-    ? `Largest explained spike: ${withDrivers.finding} — coincided with ${withDrivers.drivers[0].value} (${withDrivers.drivers[0].dimension}, +${withDrivers.drivers[0].pct_above_own_avg}%).`
-    : `${top.length} spike(s) detected; no single dimension clearly explained any of them.`;
-  document.getElementById("footRootCause").innerHTML =
-    `Source: <span class="mono">analysis.anomalies[].drivers</span> — run ${esc(payload.run_id || "latest")}`;
-}
 
 /* =========================================================================
    4. RENDER — RE team dashboard
@@ -1721,7 +1538,7 @@ function queueCard(r){
       <div class="save">
         ${r.savings > 0
           ? `<div class="sv">${money2(r.savings)}</div><div class="sl">saved / month</div>`
-          : `<div class="sv" style="font-size:16px;color:var(--text-secondary)">—</div><div class="sl">governance change</div>`}
+          : `<div class="sv" style="font-size:17px;color:var(--text-secondary)">—</div><div class="sl">governance change</div>`}
       </div>
     </div>
 
@@ -1740,7 +1557,7 @@ function queueCard(r){
       <div><b>Blast radius: ${esc(r.risk)}.</b> ${esc(riskText)}</div></div>
 
     ${needsOverride ? `
-    <label class="risk-override" style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;color:var(--text-secondary);margin:4px 0 10px">
+    <label class="risk-override" style="display:flex;align-items:flex-start;gap:8px;font-size:13.5px;color:var(--text-secondary);margin:4px 0 10px">
       <input type="checkbox" id="ovr_${r.id}" data-overridebox="${r.id}" style="margin-top:2px" />
       I understand the blast radius and want to proceed anyway.
     </label>` : ""}
@@ -1749,7 +1566,7 @@ function queueCard(r){
       <button class="btn btn-approve" data-stageapprove="${r.id}" type="button"
         ${needsOverride ? `disabled title="Check the override box above to enable approval of this high-risk change."` : ""}>Stage: Approve</button>
       <button class="btn btn-danger" data-declinetoggle="${r.id}" type="button">Stage: Decline</button>
-      <span style="font-size:11.5px;color:var(--text-muted)">Staging never touches AWS — it only records your decision until the batch is committed below.</span>
+      <span style="font-size:12.5px;color:var(--text-muted)">Staging never touches AWS — it only records your decision until the batch is committed below.</span>
     </div>
 
     <div class="decline-box" id="dec_${r.id}">
@@ -1788,7 +1605,7 @@ function stagedCard(r){
       </div>
       <div class="save">${r.savings > 0
         ? `<div class="sv">${money2(r.savings)}</div><div class="sl">would save / month</div>`
-        : `<div class="sv" style="font-size:16px;color:var(--text-secondary)">—</div><div class="sl">no direct saving</div>`}</div>
+        : `<div class="sv" style="font-size:17px;color:var(--text-secondary)">—</div><div class="sl">no direct saving</div>`}</div>
     </div>
     <p class="rationale" style="margin-top:-4px">Staged by ${esc(r.stagedBy || "the RE team")} · ${esc(r.stagedAt || "")}</p>
     <div class="actions">

@@ -479,16 +479,27 @@ class Handler(BaseHTTPRequestHandler):
         question = (body.get("question") or "").strip()
         session_id = (body.get("session_id") or "default").strip() or "default"
         role = (body.get("role") or "employee").strip().lower()
-        result = answer_question(
-            question,
-            APP_CFG,
-            pipeline_running=PIPELINE_RUNNING.is_set(),
-            session_id=session_id,
-            role=role,
-            actions=[a.to_dict() for a in ACTION_STORE.all()],
-            cache=CHAT_CACHE,
-            history=CHAT_HISTORY,
-        )
+        try:
+            result = answer_question(
+                question,
+                APP_CFG,
+                pipeline_running=PIPELINE_RUNNING.is_set(),
+                session_id=session_id,
+                role=role,
+                actions=[a.to_dict() for a in ACTION_STORE.all()],
+                cache=CHAT_CACHE,
+                history=CHAT_HISTORY,
+            )
+        except Exception as exc:
+            # Same rule as every other user-facing endpoint here: answer with
+            # the reason, never let the exception escape. Letting it propagate
+            # kills the handler thread and closes the socket with no response
+            # at all, which the browser reports only as "Failed to fetch" —
+            # hiding whatever actually went wrong (an LLM rate limit, say).
+            log.exception("Chat answer failed")
+            return self._send_json(HTTPStatus.OK, {
+                "answer": "", "citations": [], "error": str(exc),
+            })
         self._send_json(HTTPStatus.OK, result)
 
     def _handle_chat_stream(self) -> None:
