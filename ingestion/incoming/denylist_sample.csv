@@ -1,0 +1,3 @@
+LinkedAccountId,Service,UsageType,Region,UsageStartDate,BlendedCost,UsageQuantity,Tags
+123456789012,AmazonEC2,BoxUsage:t3.medium,us-east-1,2026-01-01,12.34,24,Owner=alice;Project=finops
+999999999999,AmazonEC2,BoxUsage:t3.large,us-east-1,2026-01-01,50,10,Owner=mallory;Project=unknown

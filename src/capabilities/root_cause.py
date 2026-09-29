@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-_OTHER_DIMENSIONS = ("service", "region", "instance_type", "project_tag")
+_OTHER_DIMENSIONS = ("service", "region", "instance_type", "project_tag", "cost_centre", "environment")
 _MAX_DRIVERS = 3
 _MIN_HISTORY = 2  # need at least this many days for a value's "own average" to mean anything
 _DRIVER_PCT_THRESHOLD = 30  # how far above its own average counts as a lead

@@ -1,0 +1,4 @@
+# For cost_explorer_export.py only - a local admin tool, not part of the
+# containerized pipeline (requirements.txt / Dockerfile never need boto3).
+boto3
+python-dotenv

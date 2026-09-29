@@ -1,0 +1,20 @@
+python-dotenv>=1.0.1
+pydantic>=2.7.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+langgraph>=0.2.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+faiss-cpu>=1.8.0
+pypdf>=4.3.0
+langgraph-checkpoint-sqlite>=2.0.0
+cryptography>=42.0.0
+
+# Step 4/5 - real Redis (session memory + semantic cache) and Postgres
+# (persistent store + LangGraph checkpointer), replacing the JSON-file and
+# SQLite stand-ins.
+redis>=5.0.0
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+psycopg[binary]>=3.1.0
+langgraph-checkpoint-postgres>=2.0.0

@@ -1,0 +1,41 @@
+# Local dev infra shared by M2 (agents/) and M3 (src/capabilities/, already
+# upgraded - see integration Step 6) - Redis for session memory + semantic
+# cache, Postgres for the persistent analysis/feedback/audit store. Both
+# bound to 127.0.0.1 only
+# - never exposed beyond this machine. Dev-only credentials; not for any
+# real deployment.
+services:
+  redis:
+    # redis-stack-server, not plain redis: this repo's semantic cache uses
+    # RediSearch's real vector KNN search (FT.CREATE/FT.SEARCH), which plain
+    # redis:7-alpine does not have.
+    image: redis/redis-stack-server:latest
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: finops
+      POSTGRES_PASSWORD: finops_dev_only
+      POSTGRES_DB: finops
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finops -d finops"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  redis_data:
+  postgres_data:

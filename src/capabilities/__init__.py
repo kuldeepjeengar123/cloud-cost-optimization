@@ -7,6 +7,7 @@ from .root_cause import explain_anomalies
 from .forecasting import forecast_costs
 from .tag_governance import check_tag_governance
 from .metadata import attach_metadata, MetadataTracker
+from .output_guardrails import redact_payload, encrypt_payload, decrypt_payload
 
 __all__ = [
     "validate_records",
@@ -19,4 +20,7 @@ __all__ = [
     "check_tag_governance",
     "attach_metadata",
     "MetadataTracker",
+    "redact_payload",
+    "encrypt_payload",
+    "decrypt_payload",
 ]

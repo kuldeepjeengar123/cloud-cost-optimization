@@ -10,15 +10,45 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 import time
 from typing import Any
 
 import requests
+import truststore
 
 from ..config import LLMConfig
 from ..utils.logger import get_logger
 
 log = get_logger("llm.client")
+
+
+class _TruststoreAdapter(requests.adapters.HTTPAdapter):
+    """Makes this adapter's connections verify certs against the OS trust
+    store (Windows Certificate Store / macOS Keychain / etc.) instead of
+    requests/urllib3's bundled certifi list — needed on networks with a
+    corporate TLS-inspection proxy, whose certificate Windows already trusts
+    but certifi doesn't. Scoped to this one requests.Session only (see
+    _SESSION below), not a global ssl.SSLContext patch — the openai/httpx2
+    SDK used elsewhere in this project (M2's LLM/embeddings client) already
+    does its own native OS-trust-store verification via truststore
+    internally, and a global patch here previously conflicted with that
+    (RecursionError in truststore's own verify_mode setter). This adapter
+    touches only requests' pool manager, never the global ssl module, so it
+    cannot conflict with that other, independent usage."""
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["ssl_context"] = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        return super().init_poolmanager(*args, **kwargs)
+
+
+def _make_session() -> requests.Session:
+    session = requests.Session()
+    session.mount("https://", _TruststoreAdapter())
+    return session
+
+
+_SESSION = _make_session()
 
 
 class LLMError(RuntimeError):
@@ -142,7 +172,7 @@ class LLMClient:
         for i, key in enumerate(self._keys):
             headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
             try:
-                resp = requests.post(self.cfg.base_url, headers=headers, json=payload, stream=stream, timeout=120)
+                resp = _SESSION.post(self.cfg.base_url, headers=headers, json=payload, stream=stream, timeout=120)
             except requests.RequestException as exc:
                 last_err = exc
                 log.warning("OpenRouter request failed (%s); trying the next configured key if any.", exc)

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..capabilities.metadata import MetadataTracker, attach_metadata
+from ..capabilities.output_guardrails import encrypt_payload, redact_payload
 from ..config import PipelineConfig
 from ..utils.logger import get_logger
 
@@ -119,6 +120,16 @@ def run_step5_finalize(
     log.info("Step 5: finalize & persist")
     tracker.record_stage("step5_finalize")
     metadata = tracker.snapshot()
+
+    guardrail_report: dict = {"pii_hits": {}, "policy_hits": {}}
+    if cfg.capabilities.output_guardrails:
+        combined, guardrail_report = redact_payload(combined)
+        if guardrail_report["pii_hits"] or guardrail_report["policy_hits"]:
+            log.warning(
+                "Output guardrails: redacted %d PII hit(s), %d policy hit(s) before writing final response",
+                len(guardrail_report["pii_hits"]), len(guardrail_report["policy_hits"]),
+            )
+
     final_payload = attach_metadata(combined, tracker)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -129,9 +140,22 @@ def run_step5_finalize(
     json_path.write_text(json.dumps(final_payload, indent=2, default=str), encoding="utf-8")
     md_path.write_text(_render_markdown(combined, metadata), encoding="utf-8")
 
-    log.info("Wrote %s and %s", json_path.name, md_path.name)
-    return {
+    result = {
         "payload": final_payload,
         "json_path": str(json_path),
         "markdown_path": str(md_path),
+        "guardrail_report": guardrail_report,
     }
+
+    if cfg.capabilities.output_guardrails:
+        # Additive - the plaintext files above stay human-readable on
+        # purpose. This encrypted copy is the "encryption at rest" leg of
+        # the output guardrails, alongside the redaction already applied.
+        enc_path = out_dir / f"insights_{timestamp}.json.enc"
+        encrypt_payload(final_payload, enc_path)
+        result["encrypted_path"] = str(enc_path)
+        log.info("Wrote %s, %s, and %s", json_path.name, md_path.name, enc_path.name)
+    else:
+        log.info("Wrote %s and %s", json_path.name, md_path.name)
+
+    return result

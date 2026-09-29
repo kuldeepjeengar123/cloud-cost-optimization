@@ -1,0 +1,22 @@
+services:
+  pipeline:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./incoming:/app/incoming
+      - ./processed:/app/processed
+      - ./staging:/app/staging
+      - ./processing_log.jsonl:/app/processing_log.jsonl
+      - ./secret.key:/app/secret.key
+    environment:
+      WATCH_FOLDER: /app/incoming
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      ACCOUNT_DENYLIST: ${ACCOUNT_DENYLIST:-999999999999}
+      ACCOUNT_ALLOWLIST: ${ACCOUNT_ALLOWLIST:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-5}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

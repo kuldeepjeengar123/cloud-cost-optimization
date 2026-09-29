@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-SourceKind = Literal["local_csv", "cost_explorer", "cloudwatch"]
+SourceKind = Literal["m1", "local_csv", "cost_explorer", "cloudwatch"]
 DateRange = Literal["today", "yesterday", "weekly", "monthly", "yearly"]
 
 # Rolling-window length (in days) for each preset, counting back from the
@@ -55,16 +55,48 @@ class CapabilitiesConfig:
     track_metadata: bool = True
     assess_risk: bool = True
     detect_anomalies: bool = True
+    # Separate toggle for the heavier Isolation Forest pass within
+    # detect_anomalies (see capabilities/anomaly_detection.py) - the z-score
+    # pass alone is near-instant; the ML pass adds a real, one-time
+    # scikit-learn/numpy import cost (several seconds, first call per
+    # process) plus a smaller per-call cost after that. On by default for
+    # real runs; tests that only care about something else (e.g. timing)
+    # should disable this one specifically, same as assess_risk below.
+    detect_anomalies_isolation_forest: bool = True
     explain_anomalies: bool = True
     forecast_costs: bool = True
     check_tag_governance: bool = True
+    # Output-side guardrails (capabilities/output_guardrails.py): PII
+    # redaction + basic content-policy check on the final payload, plus an
+    # additive encrypted-at-rest copy alongside the existing plaintext
+    # insights_*.json/.md. Toxicity detection and data-leakage prevention
+    # are explicitly out of scope (integration Step 8 decision), not
+    # partially implemented here.
+    output_guardrails: bool = True
+    # The real M1 -> M2 hop (integration Step 12): M1Source runs each line
+    # item through M2's normalise+enrich graph before M3 ever sees it. OFF
+    # BY DEFAULT, unlike every other toggle above - this is the one capability
+    # that makes real external calls (LLM completion + embeddings), not pure
+    # local computation. Flip to True only once agent_module/.env has a real
+    # OPENROUTER_API_KEY and you're ready to spend real (if small, given the
+    # demo dataset's size) LLM/embedding calls.
+    m2_enrichment: bool = False
 
 
 @dataclass
 class PipelineConfig:
     project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent)
-    sources: list[SourceKind] = field(default_factory=lambda: ["local_csv"])
+    # Integration Step 11: m1 (ingestion/'s real, validated/masked/
+    # encrypted output) is the real production default. local_csv (docs/*.csv)
+    # was a developer's own test fixture, not real M1 output - kept available
+    # for dev/testing (pass sources=["local_csv"] explicitly), just no longer
+    # what a plain PipelineConfig() gives you.
+    sources: list[SourceKind] = field(default_factory=lambda: ["m1"])
     docs_folder: Path = field(default=Path("docs"))
+    # Sibling folder at the repo root (see ingestion/), not nested under src/ -
+    # M1 is a separate, independently runnable/containerized module. Renamed
+    # from m1_ingestion/ during the folder reorg (integration Step 13).
+    m1_folder: Path = field(default=Path("ingestion"))
     output_folder: Path = field(default=Path("outputs"))
     # Where applied (human-approved) changes are written. The CSV backend writes
     # modified copies here under <run_id>/ so the source docs/ stay untouched.
@@ -133,6 +165,8 @@ class PipelineConfig:
     def __post_init__(self) -> None:
         if not self.docs_folder.is_absolute():
             self.docs_folder = self.project_root / self.docs_folder
+        if not self.m1_folder.is_absolute():
+            self.m1_folder = self.project_root / self.m1_folder
         if not self.output_folder.is_absolute():
             self.output_folder = self.project_root / self.output_folder
         if not self.applied_folder.is_absolute():

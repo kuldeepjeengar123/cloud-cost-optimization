@@ -1,0 +1,10 @@
+LinkedAccountId,Service,UsageType,Region,UsageStartDate,BlendedCost,UsageQuantity,Tags,error
+6.90272E+11,AWS Glue,,,01-09-2026,0,37,,usage_type: Input should be a valid string
+6.90272E+11,AWS Key Management Service,,,01-09-2026,0,3,,usage_type: Input should be a valid string
+6.90272E+11,AWS Secrets Manager,,,01-09-2026,0.000015,3,,usage_type: Input should be a valid string
+6.90272E+11,EC2 - Other,,,01-09-2026,0.046445653,25.93428956,,usage_type: Input should be a valid string
+6.90272E+11,Amazon Elastic Compute Cloud - Compute,,,01-09-2026,0.137385007,25.37891904,,usage_type: Input should be a valid string
+6.90272E+11,Amazon Simple Notification Service,,,01-09-2026,0,3,,usage_type: Input should be a valid string
+6.90272E+11,Amazon Simple Queue Service,,,01-09-2026,0,3,,usage_type: Input should be a valid string
+6.90272E+11,Amazon Simple Storage Service,,,01-09-2026,0.000734181,272.0271471,,usage_type: Input should be a valid string
+6.90272E+11,Amazon Virtual Private Cloud,,,01-09-2026,0.127052785,25.410557,,usage_type: Input should be a valid string

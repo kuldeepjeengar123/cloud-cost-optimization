@@ -48,6 +48,14 @@ def _test_cfg() -> PipelineConfig:
     # feature via its own documented toggle (rather than patching risk.py
     # too) is the safest way to guarantee zero real network/LLM calls here.
     cfg.capabilities.assess_risk = False
+    # Step 2's Isolation Forest pass (capabilities/anomaly_detection.py) adds
+    # a real scikit-learn/numpy import cost (several seconds, first call per
+    # process) plus a smaller per-call cost after that - unrelated to what
+    # these tests check, but enough to blow ParallelAgentConcurrencyTests'
+    # tight timing budget below. Disabled here for the same reason
+    # assess_risk is: keep this test file measuring only what it says it
+    # measures. The z-score pass (detect_anomalies itself) stays on.
+    cfg.capabilities.detect_anomalies_isolation_forest = False
     return cfg
 
 

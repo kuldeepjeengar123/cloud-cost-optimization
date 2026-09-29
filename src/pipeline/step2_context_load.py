@@ -67,7 +67,11 @@ def run_step2_context_load(cfg: PipelineConfig, step1_output: dict) -> dict[str,
     # checks run as their own orchestrator steps right after this one — see
     # orchestrator.py — so each shows up as its own node in the pipeline
     # flowchart instead of being invisibly folded into this step.
-    anomaly_signals = detect_anomalies(records) if cfg.capabilities.detect_anomalies else []
+    anomaly_signals = (
+        detect_anomalies(records, include_isolation_forest=cfg.capabilities.detect_anomalies_isolation_forest)
+        if cfg.capabilities.detect_anomalies
+        else []
+    )
 
     correlations: dict[str, Any] = {}
     for table, rows in records.items():
@@ -83,6 +87,10 @@ def run_step2_context_load(cfg: PipelineConfig, step1_output: dict) -> dict[str,
             correlations[f"{table}__by_instance_type"] = _aggregate(rows, "instance_type")
         if "project_tag" in rows[0]:
             correlations[f"{table}__by_project_tag"] = _aggregate(rows, "project_tag")
+        if "cost_centre" in rows[0]:
+            correlations[f"{table}__by_cost_centre"] = _aggregate(rows, "cost_centre")
+        if "environment" in rows[0]:
+            correlations[f"{table}__by_environment"] = _aggregate(rows, "environment")
 
     total_cost = 0.0
     for rows in records.values():

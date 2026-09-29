@@ -1,0 +1,10 @@
+LinkedAccountId,Service,UsageType,Region,UsageStartDate,BlendedCost,UsageQuantity,Tags
+690271886075,AWS Glue,,,2026-09-01,0,37,
+690271886075,AWS Key Management Service,,,2026-09-01,0,3,
+690271886075,AWS Secrets Manager,,,2026-09-01,0.000015,3,
+690271886075,EC2 - Other,,,2026-09-01,0.0464456527,25.9342895552,
+690271886075,Amazon Elastic Compute Cloud - Compute,,,2026-09-01,0.1373850072,25.3789190433,
+690271886075,Amazon Simple Notification Service,,,2026-09-01,0,3,
+690271886075,Amazon Simple Queue Service,,,2026-09-01,0,3,
+690271886075,Amazon Simple Storage Service,,,2026-09-01,0.0007341807,272.0271471226,
+690271886075,Amazon Virtual Private Cloud,,,2026-09-01,0.127052785,25.410557,

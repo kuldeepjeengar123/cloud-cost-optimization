@@ -8,6 +8,7 @@ from .base import InputSource
 from .cloudwatch_api import CloudWatchSource
 from .cost_explorer_api import CostExplorerSource
 from .local_csv import LocalCSVSource
+from .m1_source import M1Source
 
 log = get_logger("inputs.factory")
 
@@ -18,7 +19,9 @@ def build_sources(cfg: PipelineConfig) -> list[InputSource]:
     # date_range, just expressed as an int; default 30 matches its own default.
     ce_days = DATE_RANGE_DAYS.get(cfg.date_range, 30)
     for kind in cfg.sources:
-        if kind == "local_csv":
+        if kind == "m1":
+            sources.append(M1Source(cfg.m1_folder, m2_enrichment=cfg.capabilities.m2_enrichment))
+        elif kind == "local_csv":
             sources.append(LocalCSVSource(cfg.docs_folder, date_range=cfg.date_range))
         elif kind == "cost_explorer":
             sources.append(CostExplorerSource(region=cfg.aws_region, days=ce_days))

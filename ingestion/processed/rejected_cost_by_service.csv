@@ -1,0 +1,2 @@
+LinkedAccountId,Service,UsageType,Region,UsageStartDate,BlendedCost,UsageQuantity,Tags,error
+6.90E+11,Amazon Elastic Compute Cloud - Compute,,,01-09-2026,0.137385007,25.37891904,,"linked_account_id: String should match pattern '^\d{12}$'; usage_type: Input should be a valid string; usage_start_date: Value error, usage_start_date must be ISO-8601 (YYYY-MM-DD), got '01-09-2026'"

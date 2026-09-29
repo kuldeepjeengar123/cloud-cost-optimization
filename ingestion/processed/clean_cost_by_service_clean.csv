@@ -1,0 +1,2 @@
+linked_account_id,service,usage_type,region,usage_start_date,blended_cost,usage_quantity,tags
+123456789012,Amazon Elastic Compute Cloud - Compute,BoxUsage:t3.medium,us-east-1,2026-09-01,0.137385007,25.37891904,

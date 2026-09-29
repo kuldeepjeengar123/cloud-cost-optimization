@@ -11,7 +11,7 @@ function of the normalized records, returns plain findings.
 from __future__ import annotations
 
 _UNTAGGED_MARKERS = {"", "none", "null", "unknown", "untagged", "n/a"}
-_TAG_COLUMNS = ("project_tag",)  # extend here if a source adds owner/env columns
+_TAG_COLUMNS = ("project_tag", "cost_centre", "environment")  # M2's business_tags, when enrichment is on (see m1_source.py)
 _HIGH_SEVERITY_SHARE = 0.2  # untagged spend above this share of the table's total
 
 

@@ -1,0 +1,7 @@
+pandas
+polars
+pydantic
+cryptography
+watchdog
+fastapi
+uvicorn[standard]

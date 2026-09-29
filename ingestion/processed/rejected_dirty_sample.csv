@@ -1,0 +1,4 @@
+LinkedAccountId,Service,UsageType,Region,UsageStartDate,BlendedCost,UsageQuantity,Tags,error
+123456789012,AmazonS3,TimedStorage-ByteHrs,us-east-1,2026-01-02,,100,Owner=alice;Project=finops,blended_cost: Input should be a valid number
+123456789012,AmazonRDS,InstanceUsage,us-east-1,2026-01-04,-5.00,10,Owner=alice;Project=finops,blended_cost: Input should be greater than or equal to 0
+123456789012,AmazonEC2,BoxUsage:t3.medium,us-east-1,01/05/2026,3.20,5,Owner=alice;Project=finops,"usage_start_date: Value error, usage_start_date must be ISO-8601 (YYYY-MM-DD), got '01/05/2026'"

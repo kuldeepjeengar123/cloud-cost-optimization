@@ -1,0 +1,42 @@
+[
+  {
+    "linked_account_id": "123456789012",
+    "service": "AmazonEC2",
+    "usage_type": "BoxUsage:t3.medium",
+    "region": "us-east-1",
+    "usage_start_date": "2026-01-01",
+    "blended_cost": 12.34,
+    "usage_quantity": 24.0,
+    "tags": "Owner=alice;Project=finops"
+  },
+  {
+    "linked_account_id": "123456789012",
+    "service": "AmazonEC2",
+    "usage_type": "BoxUsage:t3.medium",
+    "region": "us-east-1",
+    "usage_start_date": "2026-01-03",
+    "blended_cost": 8.5,
+    "usage_quantity": 24.0,
+    "tags": "Owner=[REDACTED_EMAIL];Project=finops"
+  },
+  {
+    "linked_account_id": "123456789012",
+    "service": "AmazonS3",
+    "usage_type": "TimedStorage-ByteHrs",
+    "region": "us-east-1",
+    "usage_start_date": "2026-01-06",
+    "blended_cost": 1.1,
+    "usage_quantity": 50.0,
+    "tags": "BackupArn=[REDACTED_ARN];Owner=alice"
+  },
+  {
+    "linked_account_id": "123456789012",
+    "service": "AmazonEC2",
+    "usage_type": "BoxUsage:t3.medium",
+    "region": "us-east-1",
+    "usage_start_date": "2026-01-07",
+    "blended_cost": 4.44,
+    "usage_quantity": 12.0,
+    "tags": "InternalAcct=[REDACTED_ACCOUNT_ID];Owner=alice"
+  }
+]

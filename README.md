@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# cloud-cost-optimization
-=======
 # AWS Cost & Ops Insights Pipeline
 
 A modular, LLM-augmented pipeline that turns raw AWS cost and operations data
@@ -485,4 +482,3 @@ decline first — see [The approval workflow](#the-approval-workflow-human-in-th
   before acting on it or sharing it outside the team.** This project
   automates analysis and drafting; it does not replace human review of what
   gets applied to a real AWS account.
->>>>>>> rag_framework

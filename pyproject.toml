@@ -18,6 +18,13 @@ dependencies = [
     "mcp (>=1.0.0,<2.0.0)",
     "langgraph>=0.2,<0.3",
     "langchain-core>=0.3,<0.4",
+    # Step 11: src/inputs/m1_source.py decrypts ingestion/'s real output.
+    "cryptography>=42.0.0",
+    # Step 6: capabilities/anomaly_detection.py (Isolation Forest) and
+    # capabilities/forecasting.py (Prophet 30/60/90-day forecasts).
+    "scikit-learn>=1.4.0",
+    "prophet>=1.1.0",
+    "pandas>=2.0.0",
 ]
 
 
