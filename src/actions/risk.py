@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..llm.client import LLMClient
+from ..prompts import load_prompt
 from ..utils.logger import get_logger
 from .models import Action
 
@@ -79,11 +80,7 @@ def assess_risk(action: Action, cfg: "PipelineConfig", executor=None) -> None:
     try:
         client = LLMClient(cfg.llm)
         result = client.complete_json(
-            system=(
-                "You write a single, concrete sentence explaining the operational "
-                "blast radius of a proposed AWS change, for a Reliability Engineer "
-                'who must approve or decline it. Return JSON: {"reason": str}.'
-            ),
+            system=load_prompt("risk_assessment"),
             user=(
                 f"Recommendation: {action.title}\n"
                 f"Operation: {action.op or 'unknown'}\n"

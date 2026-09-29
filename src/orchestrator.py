@@ -1,7 +1,17 @@
 """Pipeline orchestrator — runs the full flow from inputs to final response.
 
 Mirrors the diagram exactly:
-    Inputs -> Step 1 -> Step 2 -> (Step 3.1 || 3.2 -> 3.3) -> Step 4 -> Step 5
+    Inputs -> Step 1 -> Step 2 -> (5 parallel agents -> 3.3) -> Step 4 -> Step 5
+
+Step 3.1 (Charts) and the old, single "Step 3.2: Analysis" LLM call have
+been replaced by five narrowly-scoped agents that run concurrently:
+run_step3_1_charts, run_cost_anomaly, run_budget_forecast,
+run_optimisation_recommendation (all "capable tier" — cfg.llm.model_analysis)
+and run_usage_report ("cheap tier" — cfg.llm.model_cheap). Each reads only
+``context`` (never another agent's output) and none is needed until Step
+3.3/Step 4 afterward, so there's no reason for any of the five to wait on
+another — same independence the forecast/tag_governance/root_cause agents
+just above them already have.
 
 An optional ``on_event`` callback receives ``(event_kind, payload)`` at every
 step boundary so a frontend can stream progress to the user.
@@ -25,14 +35,20 @@ from .inputs.base import SourcePayload
 from .integrations.teams import notify_teams
 from .llm.client import LLMClient
 from .pipeline import (
+    run_budget_forecast,
+    run_cost_anomaly,
+    run_optimisation_recommendation,
     run_step1_normalize,
     run_step2_context_load,
     run_step3_1_charts,
-    run_step3_2_analysis,
     run_step3_3_summary,
     run_step4_combine,
     run_step5_finalize,
+    run_usage_report,
 )
+# Reused from the (still-active-for-orchestrator_graph.py) old Step 3.2 —
+# KPIs are deterministic, so there's no reason to recompute this logic.
+from .pipeline.step3_2_analysis import _baseline_kpis
 from .utils.logger import get_logger
 
 log = get_logger("orchestrator")
@@ -49,10 +65,18 @@ STEP_LABELS = {
     "tag_governance": ("Checking tag governance",        "Tags checked"),
     "root_cause":     ("Correlating anomaly root cause",  "Root cause ready"),
     "step3_1":        ("Generating chart specs",         "Charts drafted"),
+    # Kept for orchestrator_graph.py, which still uses the single-call Step
+    # 3.2 (run_step3_2_analysis) unchanged — this active orchestrator uses
+    # the four parallel agents below in its place instead.
     "step3_2":        ("Crunching analysis & metrics",   "Analysis ready"),
+    "run_cost_anomaly":                ("Running cost anomaly agent (capable tier)",                "Cost anomaly ready"),
+    "run_budget_forecast":             ("Running budget forecast agent (capable tier)",             "Budget forecast ready"),
+    "run_optimisation_recommendation": ("Running optimisation recommendation agent (capable tier)", "Optimisation recommendation ready"),
+    "run_usage_report":                ("Running usage report agent (cheap tier)",                  "Usage report ready"),
     "step3_3":        ("Writing executive summary",      "Summary written"),
     "step4":          ("Combining all responses",        "Combined"),
     "step5":          ("Finalizing report",              "Report ready"),
+    "finalize_actions": ("Planning & risk-assessing recommendations", "Recommendations ready"),
 }
 
 
@@ -118,11 +142,19 @@ def run_pipeline(
         _emit(on_event, "step_start", {"step": step, "label": STEP_LABELS[step][0]})
         return start
 
-    def _done(step: str, extra: Optional[dict] = None) -> None:
+    def _done(step: str, extra: Optional[dict] = None, data: Optional[dict] = None) -> None:
         elapsed = round(time.time() - timings.get(step, time.time()), 2)
         payload = {"step": step, "label": STEP_LABELS[step][1], "elapsed_s": elapsed}
         if extra:
             payload["info"] = extra
+        if data is not None:
+            # The step's actual output (the real chart specs, analysis
+            # findings, summary text, ...) — not just a count. `info` above
+            # stays small on purpose (it also goes out over the SSE stream to
+            # the browser on every run); `data` is what a caller like
+            # server.py's Postgres logging persists as that step's full
+            # response instead of a bare `{"charts": 5}`-style summary.
+            payload["data"] = data
         _emit(on_event, "step_complete", payload)
 
     _emit(on_event, "run_start", {"query": cfg.user_query, "sources": cfg.sources})
@@ -144,7 +176,10 @@ def run_pipeline(
     if not payloads:
         _emit(on_event, "error", {"message": "No input sources produced data."})
         raise RuntimeError("No input sources produced data. Check config and inputs.")
-    _done("inputs", {"records": sum(p.total_records for p in payloads), "count": len(payloads)})
+    _done(
+        "inputs", {"records": sum(p.total_records for p in payloads), "count": len(payloads)},
+        data={"sources": [{"kind": p.kind, "name": p.name, "total_records": p.total_records, "notes": p.notes} for p in payloads]},
+    )
 
     # --- Step 1 ---
     _start("step1")
@@ -158,7 +193,12 @@ def run_pipeline(
     log.info("=== STEP 2: CONTEXT LOAD ===")
     tracker.record_stage("step2_context_load")
     context = run_step2_context_load(cfg, step1)
-    _done("step2", {"total_cost": context["business_metadata"]["total_cost_observed"]})
+    _done(
+        "step2", {"total_cost": context["business_metadata"]["total_cost_observed"]},
+        # Everything context load actually produced, except "records" — the
+        # normalized row-level data, already summarized by Step 1's own row.
+        data={k: v for k, v in context.items() if k != "records"},
+    )
 
     # --- Cost Forecast / Tag Governance / Anomaly Root-Cause agents (parallel) ---
     # None of the three depend on each other's output — forecast and tag
@@ -182,41 +222,86 @@ def run_pipeline(
             result = future.result()
             if key == "forecast":
                 context["forecast"] = result
-                _done("forecast", {"flag": result.get("flag", False)})
+                _done("forecast", {"flag": result.get("flag", False)}, data=result)
             elif key == "tag_governance":
                 context["tag_findings"] = result
-                _done("tag_governance", {"findings": len(result)})
+                _done("tag_governance", {"findings": len(result)}, data={"tag_findings": result})
             else:
                 context["anomaly_signals"] = result
-                _done("root_cause", {"anomalies": len(result)})
+                _done("root_cause", {"anomalies": len(result)}, data={"anomalies": result})
 
-    # --- Step 3.1 ---
-    _start("step3_1")
-    log.info("=== STEP 3.1: GENERATE CHARTS ===")
+    # --- Step 3.1 (Charts) + Step 3.2 replacement: 5 parallel agents ---
+    # Charts and the four new analysis agents (cost anomaly / budget
+    # forecast / optimisation recommendation — capable tier; usage report —
+    # cheap tier) are all independent of each other: each reads only
+    # `context` (plus, for optimisation, the deterministic `kpis` below),
+    # never another one's output, and none of the five is needed until
+    # Step 4/3.3 afterward. Charts used to run to completion *before* this
+    # block even started, for no reason other than keeping its original
+    # position — now all five run on one thread pool together.
+    log.info("=== STEP 3.1 + STEP 3.2 REPLACEMENT: PARALLEL AGENTS ===")
     tracker.record_stage("step3_1_charts")
-    charts = run_step3_1_charts(cfg, context, llm)
-    _done("step3_1", {"charts": len(charts.get("charts", []))})
+    tracker.record_stage("run_cost_anomaly")
+    tracker.record_stage("run_budget_forecast")
+    tracker.record_stage("run_optimisation_recommendation")
+    tracker.record_stage("run_usage_report")
+    kpis = _baseline_kpis(context)
+    for key in ("step3_1", "run_cost_anomaly", "run_budget_forecast", "run_optimisation_recommendation", "run_usage_report"):
+        _start(key)
 
-    # --- Step 3.2 ---
-    _start("step3_2")
-    log.info("=== STEP 3.2: ANALYSIS & METRICS ===")
-    tracker.record_stage("step3_2_analysis")
-    analysis = run_step3_2_analysis(cfg, context, llm)
-    _done("step3_2", {"anomalies": len(analysis.get("anomalies", []))})
+    agent_results: dict[str, dict] = {}
+    charts: dict = {}
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {
+            pool.submit(run_step3_1_charts, cfg, context, llm): "step3_1",
+            pool.submit(run_cost_anomaly, cfg, context, llm): "run_cost_anomaly",
+            pool.submit(run_budget_forecast, cfg, context, llm): "run_budget_forecast",
+            pool.submit(run_optimisation_recommendation, cfg, context, kpis, llm): "run_optimisation_recommendation",
+            pool.submit(run_usage_report, cfg, context, llm): "run_usage_report",
+        }
+        for future in as_completed(futures):
+            key = futures[future]
+            result = future.result()
+            if key == "step3_1":
+                charts = result
+                _done(key, {"charts": len(result.get("charts", []))}, data=result)
+            elif key == "run_cost_anomaly":
+                agent_results[key] = result
+                _done(key, {"anomalies": len(result.get("anomalies", []))}, data=result)
+            elif key == "run_budget_forecast":
+                agent_results[key] = result
+                _done(key, {"trends": len(result.get("trends", []))}, data=result)
+            elif key == "run_optimisation_recommendation":
+                agent_results[key] = result
+                _done(key, {"recommendations": len(result.get("recommendations", []))}, data=result)
+            else:
+                agent_results[key] = result
+                _done(key, {"highlights": len(result.get("highlights", []))}, data=result)
+
+    analysis = {
+        "kpis": kpis,
+        "anomalies": agent_results["run_cost_anomaly"]["anomalies"],
+        "trends": agent_results["run_budget_forecast"]["trends"],
+        "benchmarks": agent_results["run_budget_forecast"]["benchmarks"],
+        "forecast": context.get("forecast") or {},
+        "tag_findings": context.get("tag_findings") or [],
+        "optimization_recommendations": agent_results["run_optimisation_recommendation"]["recommendations"],
+        "usage_report": agent_results["run_usage_report"],
+    }
 
     # --- Step 3.3 ---
     _start("step3_3")
     log.info("=== STEP 3.3: SUMMARY ===")
     tracker.record_stage("step3_3_summary")
     summary = run_step3_3_summary(cfg, context, analysis, llm)
-    _done("step3_3", {"key_findings": len(summary.get("key_findings", []))})
+    _done("step3_3", {"key_findings": len(summary.get("key_findings", []))}, data=summary)
 
     # --- Step 4 ---
     _start("step4")
     log.info("=== STEP 4: COMBINE ===")
     tracker.record_stage("step4_combine")
     combined = run_step4_combine(context, charts, analysis, summary)
-    _done("step4")
+    _done("step4", data=combined)
 
     # --- Step 5 ---
     _start("step5")
@@ -230,6 +315,14 @@ def run_pipeline(
     result["action_backend"] = cfg.action_backend
     result["applied_folder"] = str(cfg.applied_folder)
 
+    # --- Finalize: plan + risk-assess recommendations, notify Teams ---
+    # Genuinely the slowest part of a run for a large recommendation set —
+    # plan_actions() calls assess_risk() once per executable action, each a
+    # real LLM call — but until now it ran with no step_start/step_complete
+    # around it at all, so the UI looked finished at "Report ready" while
+    # this kept going in the background for as long as every risk call took.
+    _start("finalize_actions")
+    tracker.record_stage("finalize_actions")
     if not skip_action_planning:
         # --- Actions: turn recommendations into applyable, stored actions ---
         actions = plan_actions(run_id, combined, context["records"], backend=cfg.action_backend, cfg=cfg)
@@ -244,6 +337,7 @@ def run_pipeline(
             result["teams_posted"] = posted
     else:
         result["actions"] = []
+    _done("finalize_actions", {"actions": len(result["actions"])})
 
     _emit(on_event, "final", {"result": result})
     return result

@@ -72,7 +72,15 @@ class PostgresStore:
     def _connect(self):
         import psycopg  # type: ignore
 
-        return psycopg.connect(self.database_url, connect_timeout=3, autocommit=True)
+        conn = psycopg.connect(self.database_url, connect_timeout=3, autocommit=True)
+        # TIMESTAMPTZ columns are always stored as UTC internally — this only
+        # changes how this session renders them as text (e.g. `created_at` in
+        # a plain `SELECT`), to IST instead of UTC, since every person using
+        # this database is in that timezone. Session-level, not a DATABASE-
+        # wide ALTER, so it needs no extra privilege and survives a
+        # DATABASE_URL change without re-running anything.
+        conn.execute("SET TIME ZONE 'Asia/Kolkata'")
+        return conn
 
     def _ensure_schema(self) -> None:
         try:

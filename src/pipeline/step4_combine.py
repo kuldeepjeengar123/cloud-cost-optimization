@@ -106,6 +106,10 @@ def run_step4_combine(
             "benchmarks": analysis.get("benchmarks", []),
             "forecast": analysis.get("forecast", {}),
             "tag_findings": analysis.get("tag_findings", []),
+            # From run_optimisation_recommendation / run_usage_report (see
+            # orchestrator.py's parallel-agent replacement of Step 3.2).
+            "optimization_recommendations": analysis.get("optimization_recommendations", []),
+            "usage_report": analysis.get("usage_report", {}),
         },
         "summary": summary,
     }

@@ -491,7 +491,7 @@ details.plan-wrap[open]>summary .caret{transform:rotate(90deg)}
    box's layout size, so the two must be kept in sync explicitly (see
    buildFlowchart's applyZoom() in shared.js). */
 .flow-zoom-sizer{position:relative}
-.flowchart{position:relative;width:1260px;height:280px;transform-origin:0 0;transition:transform .15s ease}
+.flowchart{position:relative;width:1260px;height:420px;transform-origin:0 0;transition:transform .15s ease}
 .flow-edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .flow-edge{fill:none;stroke:var(--border);stroke-width:.9;stroke-dasharray:3 3;transition:stroke .3s,stroke-width .3s}
 .flow-edge.done{stroke:var(--good);stroke-width:1.4;stroke-dasharray:none}

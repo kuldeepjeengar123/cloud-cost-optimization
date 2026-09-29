@@ -186,7 +186,7 @@
         <p class="chart-foot" id="footDaily">Source: <span class="mono">correlations.service_daily_cost__by_date</span></p>
       </div>
 
-      <div class="chart-card">
+      <div class="chart-card" id="fleetChartCard">
         <div class="chart-head">
           <div>
             <h3>EC2 fleet — utilization against monthly cost</h3>
@@ -212,6 +212,19 @@
         <div class="plot" id="chartRegion"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
         <div class="table-view" id="tblRegion" hidden></div>
         <p class="chart-foot" id="footRegion">Source: <span class="mono">correlations.region_cost__by_region</span></p>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <div>
+            <h3>Cost by EC2 instance type</h3>
+            <p class="csub" id="captionInstanceType">Waiting on a pipeline run.</p>
+          </div>
+          <button class="tv-toggle" data-table="tblInstanceType" aria-pressed="false" type="button">Table</button>
+        </div>
+        <div class="plot" id="chartInstanceType"><div class="empty">No data yet — use "Run a new analysis" above.</div></div>
+        <div class="table-view" id="tblInstanceType" hidden></div>
+        <p class="chart-foot" id="footInstanceType">Source: <span class="mono">correlations.ec2_instance_cost__by_instance_type</span></p>
       </div>
 
     </div>
@@ -270,7 +283,7 @@
     </div>
 
     <div class="charts" style="grid-template-columns:1fr">
-      <div class="chart-card">
+      <div class="chart-card" id="reFleetChartCard">
         <div class="chart-head">
           <div>
             <h3>Fleet under review — what the queue would change</h3>
@@ -718,10 +731,21 @@ const RUN_STEP_DEFS = [
   // The pipeline still emits those events — runStepStart/runStepDone ignore
   // any key with no node, so nothing breaks by leaving them out.
   {key:"step3_1",        name:"Generate Charts (LLM)"},
-  {key:"step3_2",        name:"Analysis & Metrics (LLM)"},
+  // Step 3.2's old single "Analysis & Metrics" node is now these four
+  // parallel agents (capable/capable/capable/cheap tier) — see
+  // orchestrator.py's module docstring.
+  {key:"run_cost_anomaly",                name:"Cost Anomaly (LLM)"},
+  {key:"run_budget_forecast",             name:"Budget Forecast (LLM)"},
+  {key:"run_optimisation_recommendation", name:"Optimisation Recommendation (LLM)"},
+  {key:"run_usage_report",                name:"Usage Report (LLM)"},
   {key:"step3_3",        name:"Executive Summary (LLM)"},
   {key:"step4",          name:"Combine All Responses"},
-  {key:"step5",          name:"Final Response"}
+  {key:"step5",          name:"Final Response"},
+  // Plans + risk-assesses every recommendation (one LLM call each) and
+  // notifies Teams — real work that used to run with no progress node at
+  // all after "Final Response", making the run look finished while it kept
+  // going in the background.
+  {key:"finalize_actions", name:"Preparing Recommendations & Dashboard"}
 ];
 const RUN_VERBS = ["manifesting","loading","percolating","brewing","conjuring","untangling",
   "synthesizing","computing","crunching","thinking","polishing"];
@@ -789,9 +813,9 @@ function rrKpiValue(v){
     .map(([k,val]) => `${k}: ${typeof val === "number" ? Number(val).toFixed(4) : val}`).join(", ");
   return String(v);
 }
-function rrList(title, items, render){
+function rrList(title, items, render, note){
   if(!items || !items.length) return "";
-  return `<div class="rr-section"><h4>${esc(title)}</h4><ul class="rr-list">${
+  return `<div class="rr-section"><h4>${esc(title)}</h4>${note ? `<p class="csub">${esc(note)}</p>` : ""}<ul class="rr-list">${
     items.map(it => `<li>${render(it)}</li>`).join("")}</ul></div>`;
 }
 function renderFinalReport(result){
@@ -820,7 +844,8 @@ function renderFinalReport(result){
 
   const findingsHtml = rrList("Key findings", summary.key_findings || [], s => esc(s));
   const anomaliesHtml = rrList("Anomalies", analysis.anomalies || [],
-    a => `${rrBadge(a.severity)}${a.source === "detector" ? '<span class="chip" title="Found by the statistical anomaly detector, not the LLM">detected</span> ' : ""}${esc(a.finding || "")} <span style="color:var(--text-muted)">— ${esc(a.evidence || "")}</span>`);
+    a => `${rrBadge(a.severity)}${a.source === "detector" ? '<span class="chip" title="Found by the statistical anomaly detector, not the LLM">detected</span> ' : ""}${esc(a.finding || "")} <span style="color:var(--text-muted)">— ${esc(a.evidence || "")}</span>`,
+    "Unusual day-over-day cost spikes relative to each item's own baseline — not the same as which service/instance type costs the most overall (see the charts below for that).");
   const trendsHtml = rrList("Trends", analysis.trends || [],
     t => `${esc(t.observation || "")} <span style="color:var(--text-muted)">(${esc(t.metric || "")})</span>`);
   const recsHtml = rrList("Recommendations from this run", recItems,
@@ -830,7 +855,7 @@ function renderFinalReport(result){
   host.innerHTML = `
     <div class="rr-section"><h4>Results — ${esc(latestPipelinePayload.run_id || "this run")}</h4>
       <div class="rr-kpi-grid">${totalCard}${kpiCards}</div>
-      <p class="csub" style="margin-top:9px">Charts below (Where the money goes, Daily spend, Cost by region) now reflect this run.</p>
+      <p class="csub" style="margin-top:9px">Charts below (Where the money goes, Daily spend, Cost by region, Cost by EC2 instance type) now reflect this run.</p>
     </div>
     ${findingsHtml}${anomaliesHtml}${trendsHtml}${recsHtml}${nextStepsHtml}`;
   host.hidden = false;
@@ -1020,12 +1045,13 @@ function pipelineDailySeries(payload){
   return chart ? chart.data.map(d => [String(d.x), Number(d.y) || 0]) : [];
 }
 function getPipelineChartData(){
-  if(!latestPipelinePayload) return {service:[], daily:[], region:[]};
+  if(!latestPipelinePayload) return {service:[], daily:[], region:[], instanceType:[]};
   const payload = latestPipelinePayload;
   return {
     service: buildPipelineChartRows(payload, "correlations.service_daily_cost__by_service", "service", "cost"),
     daily: pipelineDailySeries(payload),
-    region: buildPipelineChartRows(payload, "correlations.region_cost__by_region", "region", "cost")
+    region: buildPipelineChartRows(payload, "correlations.region_cost__by_region", "region", "cost"),
+    instanceType: buildPipelineChartRows(payload, "correlations.ec2_instance_cost__by_instance_type", "instance_type", "cost")
   };
 }
 
@@ -1076,6 +1102,7 @@ function renderEmployee(){
   drawDailyChart();
   drawFleetChart();
   drawRegionChart();
+  drawInstanceTypeChart();
 
   const counts = {
     open: open.length, pending_re: pending.length, applied: applied.length,
@@ -1356,6 +1383,13 @@ function drawInstanceStateTable(){
   if(sub) sub.textContent = fleetStateSummaryText(list, fleet.length);
 }
 function drawFleetChart(){
+  // Live-AWS-only, like the EC2-instances table above — not driven by the
+  // CSV, so it has nothing to do with the "Local files" target's data and
+  // would only show the account's real (unrelated) fleet.
+  const card = document.getElementById("fleetChartCard");
+  if(card) card.hidden = currentTarget === "local_csv";
+  if(currentTarget === "local_csv") return;
+
   const list = fleetInScope();
   const capEl = document.getElementById("fleetSummaryCaption");
   if(capEl) capEl.textContent = fleetStateSummaryText(list, fleet.length);
@@ -1389,6 +1423,28 @@ function drawRegionChart(){
     : "No region cost data resolved for this run.";
   document.getElementById("footRegion").innerHTML =
     `Source: <span class="mono">correlations.region_cost__by_region</span> — run ${esc((latestPipelinePayload && latestPipelinePayload.run_id) || "latest")}`;
+}
+function drawInstanceTypeChart(){
+  const pipeline = getPipelineChartData();
+  const winLbl = windowLabel(pipeline.daily.length);
+  if(!pipeline.instanceType.length){
+    return chartEmptyState("chartInstanceType","tblInstanceType","captionInstanceType","footInstanceType",
+      `Source: <span class="mono">correlations.ec2_instance_cost__by_instance_type</span>`);
+  }
+  const data = pipeline.instanceType;
+  const total = data.reduce((s,d) => s + d[1], 0);
+  hbarChart(document.getElementById("chartInstanceType"), data,
+            {total, labelW:104, rowH:30, aria:`${winLbl} cost by EC2 instance type`, costLabel:`${winLbl} cost`});
+  renderTable(document.getElementById("tblInstanceType"),
+    [{label:"Instance type"},{label:`${winLbl} cost`, num:true},{label:"Share", num:true}],
+    data.map(d => [d[0], money2(d[1]), total ? ((d[1]/total)*100).toFixed(2) + "%" : "0.00%"]));
+
+  const top1 = data[0];
+  document.getElementById("captionInstanceType").textContent = top1
+    ? `${top1[0]} carries ${((top1[1]/total)*100).toFixed(0)}% of this run's EC2 instance-cost spend.`
+    : "No EC2 instance-type cost data resolved for this run.";
+  document.getElementById("footInstanceType").innerHTML =
+    `Source: <span class="mono">correlations.ec2_instance_cost__by_instance_type</span> — run ${esc((latestPipelinePayload && latestPipelinePayload.run_id) || "latest")}`;
 }
 
 
@@ -1433,18 +1489,25 @@ function renderRe(){
     ? `Down from ${money(fc)} if the whole queue is approved`
     : `Current fleet cost, nothing pending`;
 
-  const capElRe = document.getElementById("fleetSummaryCaptionRe");
-  if(capElRe) capElRe.textContent = fleetStateSummaryText(fleetInScope(), fleet.length);
-  fleetScatter(document.getElementById("chartReFleet"), fleetInScope(),
-               {ring:pendingTargets(), height:290}, {utilBand, instCost, monthlyOf});
-  renderLegend(document.getElementById("legendReFleet"),
-    fleetLegendItems(pendingTargets().size ? "Targeted by a pending request" : null));
-  renderTable(document.getElementById("tblReFleet"),
-    [{label:"Instance"},{label:"Type"},{label:"Region"},{label:"Env"},
-     {label:"CPU", num:true},{label:"State"},{label:"USD / month", num:true},{label:"In queue"}],
-    fleetInScope().map(i => [i.name + " (" + i.id + ")", i.type, i.region, i.env,
-      i.cpu + "%", i.state, money2(instCost(i)),
-      pendingTargets().has(i.id) ? "yes" : "no"]));
+  // Live-AWS-only, same reasoning as drawFleetChart() — not driven by the
+  // CSV, so it's hidden for the "Local files" target rather than showing
+  // the account's real (unrelated) fleet.
+  const reFleetCard = document.getElementById("reFleetChartCard");
+  if(reFleetCard) reFleetCard.hidden = currentTarget === "local_csv";
+  if(currentTarget !== "local_csv"){
+    const capElRe = document.getElementById("fleetSummaryCaptionRe");
+    if(capElRe) capElRe.textContent = fleetStateSummaryText(fleetInScope(), fleet.length);
+    fleetScatter(document.getElementById("chartReFleet"), fleetInScope(),
+                 {ring:pendingTargets(), height:290}, {utilBand, instCost, monthlyOf});
+    renderLegend(document.getElementById("legendReFleet"),
+      fleetLegendItems(pendingTargets().size ? "Targeted by a pending request" : null));
+    renderTable(document.getElementById("tblReFleet"),
+      [{label:"Instance"},{label:"Type"},{label:"Region"},{label:"Env"},
+       {label:"CPU", num:true},{label:"State"},{label:"USD / month", num:true},{label:"In queue"}],
+      fleetInScope().map(i => [i.name + " (" + i.id + ")", i.type, i.region, i.env,
+        i.cpu + "%", i.state, money2(instCost(i)),
+        pendingTargets().has(i.id) ? "yes" : "no"]));
+  }
 
   document.getElementById("queueList").innerHTML = q.length
     ? q.map(queueCard).join("")

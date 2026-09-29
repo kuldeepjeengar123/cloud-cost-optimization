@@ -3,13 +3,25 @@ not yet wired into ``server.py``/``main.py`` (see the note at the bottom of
 this file for how to switch over).
 
 Same pipeline, same behavior, same frontend SSE contract as
-``orchestrator.run_pipeline`` — every ``STEP_LABELS`` key, every
-``step_start``/``step_complete`` event shape, every post-graph action
-(``plan_actions``, Teams notification) is identical. What changes is *how*
+``orchestrator.run_pipeline`` — every ``step_start``/``step_complete`` event
+shape, every post-graph action (``plan_actions``, Teams notification) is
+identical, for the steps both orchestrators share. What changes is *how*
 the steps run: a ``langgraph.graph.StateGraph`` instead of straight-line
 Python, with the Cost Forecast / Tag Governance / Anomaly Root-Cause agents
 expressed as a real parallel fan-out (three edges from one node) instead of
 a hand-rolled ``ThreadPoolExecutor`` block.
+
+Currently out of sync with ``orchestrator.py`` in one place: the active
+orchestrator replaced its single "Step 3.2: Analysis" LLM call with four
+parallel agents (``run_cost_anomaly`` / ``run_budget_forecast`` /
+``run_optimisation_recommendation`` / ``run_usage_report`` — see its module
+docstring). This module still uses the original single-call
+``run_step3_2_analysis`` for that stage — since it isn't wired into any
+live entry point yet, that migration was deferred rather than done twice
+before either design had proven out. ``STEP_LABELS`` (imported from
+``orchestrator.py``) is shared and is now a superset of what this module
+emits; see ``tests/test_orchestrator_graph.py``'s ``GRAPH_STEP_KEYS`` for
+this module's actual current step set.
 
 Two API gotchas found by hands-on testing against the installed
 ``langgraph==0.2.76`` (its API has changed across versions, so don't assume

@@ -15,10 +15,20 @@ const STEP_DEFS = [
   { key: "tag_governance", name: "Tag Governance" },
   { key: "root_cause",     name: "Anomaly Root Cause" },
   { key: "step3_1",        name: "Generate Charts (LLM)" },
-  { key: "step3_2",        name: "Analysis & Metrics (LLM)" },
+  // Step 3.2's old single "Analysis & Metrics" node is now these four
+  // parallel agents (capable/capable/capable/cheap tier) — see
+  // orchestrator.py's module docstring.
+  { key: "run_cost_anomaly",                name: "Cost Anomaly (LLM)" },
+  { key: "run_budget_forecast",             name: "Budget Forecast (LLM)" },
+  { key: "run_optimisation_recommendation", name: "Optimisation Recommendation (LLM)" },
+  { key: "run_usage_report",                name: "Usage Report (LLM)" },
   { key: "step3_3",        name: "Executive Summary (LLM)" },
   { key: "step4",          name: "Combine All Responses" },
   { key: "step5",          name: "Final Response" },
+  // Plans + risk-assesses every recommendation (one LLM call each) and
+  // notifies Teams — used to run with no progress node at all after "Final
+  // Response", making the run look finished while it kept going.
+  { key: "finalize_actions", name: "Preparing Recommendations & Dashboard" },
 ];
 
 const VERBS = [

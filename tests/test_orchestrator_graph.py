@@ -23,6 +23,20 @@ from src.config import PipelineConfig
 from src.orchestrator import STEP_LABELS
 from src.orchestrator_graph import run_pipeline_graph
 
+# The steps orchestrator_graph.py actually emits today. It still uses the
+# original, single-call Step 3.2 (run_step3_2_analysis) — orchestrator.py's
+# active pipeline has since replaced that step with four parallel agents
+# (run_cost_anomaly / run_budget_forecast / run_optimisation_recommendation /
+# run_usage_report; see orchestrator.py's module docstring). STEP_LABELS is
+# shared between both orchestrators and now a superset of what this dormant
+# one emits, so this test checks against its own known step set rather than
+# assuming exact equality with STEP_LABELS — that equality will hold again
+# once orchestrator_graph.py is updated to mirror the same four-agent split.
+GRAPH_STEP_KEYS = {
+    "inputs", "step1", "step2", "forecast", "tag_governance", "root_cause",
+    "step3_1", "step3_2", "step3_3", "step4", "step5",
+}
+
 
 class FakeLLMClient:
     """Every call raises — each pipeline step already has a documented,
@@ -69,8 +83,12 @@ class RunPipelineGraphTests(unittest.TestCase):
 
         started = {p["step"] for k, p in events if k == "step_start"}
         completed = {p["step"] for k, p in events if k == "step_complete"}
-        self.assertEqual(started, set(STEP_LABELS.keys()))
-        self.assertEqual(completed, set(STEP_LABELS.keys()))
+        self.assertEqual(started, GRAPH_STEP_KEYS)
+        self.assertEqual(completed, GRAPH_STEP_KEYS)
+        # Every step this graph emits must still resolve to a real label in
+        # the shared STEP_LABELS dict (orchestrator_graph.py's _start/_done
+        # look it up directly and would KeyError otherwise).
+        self.assertTrue(GRAPH_STEP_KEYS.issubset(STEP_LABELS.keys()))
 
         # A step_start must precede its own step_complete, for every step.
         # (Genuine concurrency for the three agent steps is verified
@@ -83,7 +101,7 @@ class RunPipelineGraphTests(unittest.TestCase):
         # concurrently.)
         start_index = {p["step"]: i for i, (k, p) in enumerate(events) if k == "step_start"}
         complete_index = {p["step"]: i for i, (k, p) in enumerate(events) if k == "step_complete"}
-        for step in STEP_LABELS:
+        for step in GRAPH_STEP_KEYS:
             self.assertLess(start_index[step], complete_index[step], f"{step}: start did not precede complete")
 
 

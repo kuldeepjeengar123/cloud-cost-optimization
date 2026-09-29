@@ -42,6 +42,12 @@ class LLMConfig:
     model_analysis: str = "nvidia/nemotron-3-super-120b-a12b:free"
     model_summary: str = "nvidia/nemotron-3-super-120b-a12b:free"
     model_chat: str = "nvidia/nemotron-3-super-120b-a12b:free"
+    # "Cheap tier" — for agents whose task needs far less reasoning than a
+    # full analysis (e.g. run_usage_report). Defaults to the same free model
+    # as everything else (there's only one configured today) but is a
+    # distinct setting so swapping in an actually cheaper/faster model later
+    # is a one-line change, not a re-plumbing.
+    model_cheap: str = "nvidia/nemotron-3-super-120b-a12b:free"
     max_tokens: int = 4096
     stream: bool = False
 

@@ -19,8 +19,8 @@ import threading
 import time
 from typing import Optional
 
-from ..storage.postgres import PostgresStore
-from ..utils.logger import get_logger
+from ...storage.postgres import PostgresStore
+from ...utils.logger import get_logger
 
 log = get_logger("chat.memory")
 

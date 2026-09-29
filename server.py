@@ -53,8 +53,8 @@ from src.actions import (
     withdraw,
 )
 from src.actions.models import STATUS_DISMISSED
-from src.chat import answer_question, stream_answer_question
-from src.chat.memory import AnswerCache, ChatContextCache, ChatHistoryStore
+from src.integrations.chat import answer_question, stream_answer_question
+from src.integrations.chat.memory import AnswerCache, ChatContextCache, ChatHistoryStore
 from src.config import load_config
 from src.orchestrator import run_pipeline
 from src.storage.postgres import PostgresStore
@@ -398,16 +398,47 @@ class Handler(BaseHTTPRequestHandler):
 
         q: queue.Queue = queue.Queue()
 
+        # Correlates every row this run writes to Postgres (one per finished
+        # step, plus the final rollup below) — generated up front because the
+        # pipeline's own run_id isn't known until Step 5 finishes, but the
+        # very first step's row needs one immediately. A DB query for
+        # run_id=<this> returns the whole run's timeline, in order.
+        run_correlation_id = f"{target}_{time.strftime('%Y%m%d_%H%M%S')}"
+
         def on_event(kind: str, payload: dict):
             q.put((kind, payload))
-            if kind == "final":
+            if kind == "step_complete":
+                # One durable JSON row per finished agent/step — `source` is
+                # the step's own human-readable name ("Sources loaded",
+                # "Normalized", "Context loaded", "Charts drafted", "Analysis
+                # ready", "Summary written", ...; see orchestrator.py's
+                # STEP_LABELS) so it's immediately visible in the table
+                # without unpacking JSON. `response` is that step's actual
+                # output (the real chart specs, analysis findings, summary
+                # text, ...; see orchestrator.py's `_done(..., data=...)`) —
+                # falling back to the small SSE-sized `info` summary only for
+                # a step that has no separate full-data payload.
+                full = payload.get("data")
+                response = {"elapsed_s": payload.get("elapsed_s"), **full} if full is not None \
+                    else {"elapsed_s": payload.get("elapsed_s"), **(payload.get("info") or {})}
+                PG_STORE.record(
+                    source=payload.get("label") or payload.get("step") or "step",
+                    run_id=run_correlation_id,
+                    request={"target": target, "step_code": payload.get("step")},
+                    response=response,
+                )
+            elif kind == "final":
                 # Every pipeline/EC2-rightsizing run's full result (including
                 # every action it raised) gets one durable JSON row here, same
-                # table as chat turns — see src/storage/postgres.py.
+                # table as chat turns — see src/storage/postgres.py. Uses the
+                # same run_correlation_id as every step row above (not the
+                # pipeline's own insights-file run_id, still present inside
+                # response.run_id) so one `run_id` groups a run's whole
+                # timeline, step rows and final rollup together.
                 result = payload.get("result") or {}
                 PG_STORE.record(
                     source=target,
-                    run_id=result.get("run_id"),
+                    run_id=run_correlation_id,
                     request={"target": target, "query": query, "sources": sources},
                     response=result,
                 )
@@ -681,7 +712,7 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_chat_status(self) -> None:
         """Lets the widget know, without asking a question, whether it should
         present itself as info-only or fully grounded in run data."""
-        from src.chat.answer import latest_insights_path
+        from src.integrations.chat.answer import latest_insights_path
 
         running = PIPELINE_RUNNING.is_set()
         insights_path = None if running else latest_insights_path(APP_CFG)

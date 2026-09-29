@@ -136,7 +136,15 @@ function formatKpiValue(v){
 }
 function fmtTime(iso){
   if(!iso) return null;
-  return String(iso).replace("T"," ").slice(0,16) + " UTC";
+  // Every timestamp from the backend (raised_at, decided_at, decision-log
+  // entries...) is UTC — converted here to IST (UTC+5:30, no daylight
+  // saving) for display, since everyone using this dashboard is in India.
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return null;
+  const ist = new Date(d.getTime() + (5 * 60 + 30) * 60000);
+  const pad = n => String(n).padStart(2, "0");
+  return `${ist.getUTCFullYear()}-${pad(ist.getUTCMonth() + 1)}-${pad(ist.getUTCDate())} `
+       + `${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())} IST`;
 }
 // A deterministic (no-LLM) pipeline step can genuinely finish in a few
 // milliseconds — e.g. the forecast/tag-governance/root-cause agents on a
@@ -542,7 +550,12 @@ function fleetScatter(host, list, opts, deps){
   const placed = list.map(inst => {
     const cfg  = BAND[deps.utilBand(inst)];
     const cost = deps.instCost(inst);
-    const x = X(inst.cpu), y = Y(cost);
+    // A stopped/$0 instance at 0% CPU plots exactly on the axis lines'
+    // corner — clamping keeps every marker's full circle inside the plot
+    // area (at least R+2px from each edge) so it's never camouflaged
+    // against an axis line or a tick label sitting right on top of it.
+    const x = Math.min(Math.max(X(inst.cpu), padL + R + 2), padL + plotW - R - 2);
+    const y = Math.min(Math.max(Y(cost), padT + R + 2), padT + plotH - R - 2);
     const g = el("g", {}, s);
 
     if(flagged.has(inst.id)){
@@ -663,19 +676,31 @@ const FLOW_LAYOUT = {
   rows: {
     inputs:"mid", step1:"mid", step2:"mid",
     forecast:"mid", tag_governance:"mid", root_cause:"mid",
-    step3_1:"top", step3_2:"bottom", step3_3:"bottom",
+    step3_1:"top",
+    // Step 3.2's old single "Analysis" node is now 4 parallel agents,
+    // fanned out from root_cause and back in to step3_3 — see
+    // orchestrator.py's module docstring for what each one does.
+    run_cost_anomaly:"upper", run_budget_forecast:"mid",
+    run_optimisation_recommendation:"lower", run_usage_report:"bottom",
+    step3_3:"mid",
     step4:"mid", step5:"mid",
+    // Plans + risk-assesses every recommendation and notifies Teams — real
+    // work that used to run after step5 with no node of its own at all.
+    finalize_actions:"mid",
   },
   edges: [
     ["inputs","step1"], ["step1","step2"],
     ["step2","forecast"], ["forecast","tag_governance"], ["tag_governance","root_cause"],
-    ["root_cause","step3_1"], ["root_cause","step3_2"],
-    ["step3_2","step3_3"],
+    ["root_cause","step3_1"],
+    ["root_cause","run_cost_anomaly"], ["root_cause","run_budget_forecast"],
+    ["root_cause","run_optimisation_recommendation"], ["root_cause","run_usage_report"],
+    ["run_cost_anomaly","step3_3"], ["run_budget_forecast","step3_3"],
+    ["run_optimisation_recommendation","step3_3"], ["run_usage_report","step3_3"],
     ["step3_1","step4"], ["step3_3","step4"],
-    ["step4","step5"],
+    ["step4","step5"], ["step5","finalize_actions"],
   ],
 };
-const FLOW_ROW_Y = {top:18, mid:50, bottom:82};
+const FLOW_ROW_Y = {top:10, upper:30, mid:50, lower:70, bottom:90};
 const FLOW_COL_W = 170;   // px per column: 104px node + breathing room
 const FLOW_MIN_W = 680;
 
@@ -751,7 +776,10 @@ function flowEdgePath(a, b){
    before) so callers only need to swap the builder, not their event logic.
    Call refreshEdges() after any node's data-state changes to "done" so the
    edge leaving it lights up. */
-const FLOW_BASE_H = 280;   // width is per-chart now — see computeFlowLayout
+// Tall enough for 5 distinct row bands (see FLOW_ROW_Y) without the ~58px-
+// tall .flow-node boxes crowding/overlapping their neighbors — was 280px,
+// sized for the original 3-row layout. Width is per-chart — see computeFlowLayout.
+const FLOW_BASE_H = 420;
 const FLOW_ZOOM_MIN = 0.5, FLOW_ZOOM_MAX = 1.5, FLOW_ZOOM_STEP = 0.1;
 
 function buildFlowchart(host, stepDefs){

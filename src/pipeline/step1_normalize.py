@@ -17,16 +17,13 @@ from ..capabilities import deduplicate_records, normalize_records, validate_reco
 from ..config import PipelineConfig
 from ..inputs.base import SourcePayload
 from ..llm.client import LLMClient
+from ..prompts import load_prompt
 from ..utils.logger import get_logger
 
 log = get_logger("pipeline.step1")
 
 
-SYSTEM_PROMPT = (
-    "You are a data normalization assistant for AWS operations data. "
-    "Given multiple raw record tables, you must propose a unified schema and "
-    "flag inconsistencies. Reply with STRICT JSON only — no prose, no markdown."
-)
+SYSTEM_PROMPT = load_prompt("step1_normalize")
 
 
 def _schema_prompt(payload: SourcePayload) -> str:
