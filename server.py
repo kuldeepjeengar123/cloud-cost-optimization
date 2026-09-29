@@ -44,6 +44,7 @@ from src.actions import (
     commit_batch,
     commit_status,
     get_executor,
+    plan_ec2_rightsizing_actions,
     raise_for_review,
     reopen,
     rollback_batch,
@@ -53,9 +54,10 @@ from src.actions import (
 )
 from src.actions.models import STATUS_DISMISSED
 from src.chat import answer_question, stream_answer_question
-from src.chat.memory import AnswerCache, ChatHistoryStore
+from src.chat.memory import AnswerCache, ChatContextCache, ChatHistoryStore
 from src.config import load_config
 from src.orchestrator import run_pipeline
+from src.storage.postgres import PostgresStore
 from src.utils.logger import get_logger
 
 log = get_logger("server")
@@ -66,13 +68,20 @@ WEB_DIR = ROOT / "web"
 # link back here). Built once; /api/run still builds a per-request config.
 APP_CFG = load_config()
 ACTION_STORE = ActionStore(APP_CFG.output_folder / "pending_actions.json")
+# Durable log of every agent response (chat Q&A + pipeline/EC2-rightsizing
+# runs) plus a mirrored copy of the decision log below, written to Postgres
+# — see src/storage/postgres.py.
+PG_STORE = PostgresStore(APP_CFG.database_url)
 # Two-stage approval (employee raises, RE team decides) decision history —
 # used by the finops_approval_prototype.html / approval_dashboard.html pages.
-DECISION_LOG = DecisionLogStore(APP_CFG.output_folder / "decision_log.json")
-# Chat widget: Redis answer cache (falls back to in-process) + local SQLite
-# question log. Shared across requests so the cache actually caches.
+# Every entry is also mirrored into PG_STORE's decision_log table.
+DECISION_LOG = DecisionLogStore(APP_CFG.output_folder / "decision_log.json", pg_store=PG_STORE)
+# Chat widget: Redis answer cache (falls back to in-process) + Redis
+# short-lived per-session context (falls back to no context) + the Postgres
+# question log above. Shared across requests so the caches actually cache.
 CHAT_CACHE = AnswerCache(APP_CFG.redis_url)
-CHAT_HISTORY = ChatHistoryStore(APP_CFG.chat_db_path)
+CHAT_CONTEXT = ChatContextCache(APP_CFG.redis_url)
+CHAT_HISTORY = ChatHistoryStore(PG_STORE)
 # Flipped around run_pipeline() so /api/chat knows to stay in "info" mode
 # while a run is in flight, instead of answering against stale insights.
 PIPELINE_RUNNING = threading.Event()
@@ -82,23 +91,16 @@ PIPELINE_RUNNING = threading.Event()
 # one place, instead of the client having to know what each target implies.
 # Older callers (web/app.js) that still send sources/backend directly keep
 # working unchanged (see _handle_run's fallback).
+#
+# "ec2_rightsizing" reads no input source at all: it skips run_pipeline (no
+# CSV, no LLM call) entirely and goes straight to a live AWS fleet scan +
+# the deterministic nano<->micro swap — see _run_ec2_rightsizing_only() and
+# actions.planner.plan_ec2_rightsizing_actions(). `sources` is kept empty
+# here (never passed to build_sources) purely so cfg.sources reflects that.
 TARGET_MAP = {
     "local_csv": {"sources": ["local_csv"], "backend": "csv"},
-    "ec2_rightsizing": {"sources": ["local_csv"], "backend": "aws"},
+    "ec2_rightsizing": {"sources": [], "backend": "aws"},
     "real_aws": {"sources": ["cost_explorer", "cloudwatch"], "backend": "aws"},
-}
-# Query override for a target whose analysis should focus on something more
-# specific than the default broad cost review. Deliberately names no instance
-# type — it steers the LLM's attention at the same by-instance-type
-# correlation/anomaly data every run already gets; which instance type (and
-# what to resize it to) is the LLM's own read of that data, not this string.
-TARGET_QUERY = {
-    "ec2_rightsizing": (
-        "Analyze EC2 cost by instance type and identify any instance type "
-        "showing signs of being undersized (e.g. cost spikes consistent with "
-        "CPU credit exhaustion on a burstable instance). Recommend the "
-        "specific instance type change needed to resolve it."
-    ),
 }
 # The target the *last completed run* actually used — see _handle_get_target.
 # Tracked separately from APP_CFG.action_backend because backend "aws" alone
@@ -143,6 +145,114 @@ def _invalidate_fleet_cache() -> None:
     with _fleet_cache_lock:
         _fleet_cache["ts"] = 0.0
         _fleet_cache["payload"] = None
+
+
+def _write_ec2_rightsizing_insights(cfg, run_id: str, action_dicts: list[dict]) -> None:
+    """Fallback used only when the EC2-rightsizing target's own cost-analysis
+    pipeline (see ``_run_ec2_rightsizing_only``) fails or finds no CSV data —
+    writes a minimal ``insights_<UTC timestamp>.json``, same naming convention
+    as ``step5_finalize.py``, so the chat widget's ``latest_insights_path()``
+    (src/chat/answer.py) still has *something* current to ground on instead
+    of silently falling back to a stale, unrelated run's insights file. The
+    payload only claims what's actually known in this fallback case: the
+    fleet scan and its rightsizing recommendation(s), no cost breakdown.
+    """
+    payload = {
+        "business_metadata": {
+            "run_type": "ec2_rightsizing",
+            "run_id": run_id,
+            "source": (
+                "Live AWS EC2 fleet scan (describe_instances + CloudWatch "
+                "CPUUtilization) — this run did not read any cost/usage CSV "
+                "or Cost Explorer data, so no cost breakdown or anomalies "
+                "are available from it."
+            ),
+        },
+        "analysis": {"ec2_rightsizing_actions": action_dicts},
+        "summary": {
+            "key_findings": [a["title"] for a in action_dicts] or ["No rightsizing opportunities found in the current fleet."],
+            "recommendations": [a["title"] for a in action_dicts],
+        },
+        "correlations": {},
+    }
+    timestamp = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+    path = cfg.output_folder / f"insights_{timestamp}.json"
+    try:
+        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    except OSError as exc:
+        log.warning("Could not write %s (%s); chat will fall back to an older insights file.", path, exc)
+
+
+def _run_ec2_rightsizing_only(cfg, on_event) -> None:
+    """The "EC2 Rightsizing" target's whole run: two independent pieces,
+    merged into one report.
+
+    1. A normal analysis pipeline run (every agent: normalize, context load,
+       charts, analysis, summary, finalize) over ``docs/ec2_rightsizing/`` —
+       a CSV folder dedicated to this target, kept separate from the one
+       "Local files"/"Real AWS" read, so its charts/insights are grounded in
+       its own data. ``skip_action_planning=True`` so this never plans or
+       writes a recommendation of its own.
+    2. The live AWS fleet scan and deterministic nano<->micro swap (see
+       actions.planner.plan_ec2_rightsizing_actions()) — unchanged, and still
+       the *only* source of this target's recommendations.
+
+    Emits the same event shape /api/run's SSE loop and the dashboard's
+    startPipelineRun() already expect (run_start, step_start/step_complete
+    pairs, actions, final) so nothing on the frontend needs a special case
+    for this target beyond what it already renders for a normal run.
+    """
+    on_event("run_start", {"query": cfg.user_query, "sources": ["local_csv"]})
+
+    def _relay(kind: str, payload: dict) -> None:
+        # This function owns the single run_start/final pair for the whole
+        # target — the nested pipeline run below emits its own, which would
+        # otherwise duplicate/confuse the frontend's one-run-per-click model.
+        if kind in ("run_start", "final"):
+            return
+        on_event(kind, payload)
+
+    csv_cfg = load_config(
+        user_query=cfg.user_query, sources=["local_csv"],
+        docs_folder=cfg.project_root / "docs" / "ec2_rightsizing",
+        action_backend=cfg.action_backend, date_range=cfg.date_range,
+    )
+    pipeline_result = None
+    try:
+        pipeline_result = run_pipeline(csv_cfg, on_event=_relay, skip_action_planning=True)
+    except Exception as exc:
+        log.warning(
+            "EC2 Rightsizing cost-analysis pipeline failed (%s); "
+            "continuing with the fleet scan and recommendation only.", exc,
+        )
+
+    step, label = "step5", "Real AWS EC2 fleet scan"
+    start = time.time()
+    on_event("step_start", {"step": step, "label": label})
+
+    run_id = f"ec2_rightsizing_{time.strftime('%Y%m%d_%H%M%S')}"
+    actions = plan_ec2_rightsizing_actions(run_id, cfg)
+
+    on_event("step_complete", {
+        "step": step, "label": "Fleet scan complete",
+        "elapsed_s": round(time.time() - start, 2),
+    })
+
+    store = ActionStore(cfg.output_folder / "pending_actions.json")
+    store.upsert_many(actions)
+
+    action_dicts = [a.to_dict() for a in actions]
+    result = dict(pipeline_result) if pipeline_result else {"run_id": run_id}
+    result.update({
+        "actions": action_dicts,
+        "action_backend": cfg.action_backend,
+        "applied_folder": str(cfg.applied_folder),
+    })
+    if pipeline_result is None:
+        _write_ec2_rightsizing_insights(cfg, run_id, action_dicts)
+    on_event("actions", {"actions": action_dicts})
+    on_event("final", {"result": result})
+
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -251,7 +361,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 target = "real_aws"
 
-        query = TARGET_QUERY.get(target) or body.get("query") or (
+        query = body.get("query") or (
             "Provide a comprehensive AWS cost analysis with key insights and recommendations."
         )
 
@@ -290,11 +400,25 @@ class Handler(BaseHTTPRequestHandler):
 
         def on_event(kind: str, payload: dict):
             q.put((kind, payload))
+            if kind == "final":
+                # Every pipeline/EC2-rightsizing run's full result (including
+                # every action it raised) gets one durable JSON row here, same
+                # table as chat turns — see src/storage/postgres.py.
+                result = payload.get("result") or {}
+                PG_STORE.record(
+                    source=target,
+                    run_id=result.get("run_id"),
+                    request={"target": target, "query": query, "sources": sources},
+                    response=result,
+                )
 
         def runner():
             PIPELINE_RUNNING.set()
             try:
-                run_pipeline(cfg, on_event=on_event)
+                if target == "ec2_rightsizing":
+                    _run_ec2_rightsizing_only(cfg, on_event)
+                else:
+                    run_pipeline(cfg, on_event=on_event)
             except Exception as exc:
                 log.exception("Pipeline failed")
                 q.put(("error", {"message": str(exc)}))
@@ -479,6 +603,7 @@ class Handler(BaseHTTPRequestHandler):
         question = (body.get("question") or "").strip()
         session_id = (body.get("session_id") or "default").strip() or "default"
         role = (body.get("role") or "employee").strip().lower()
+        filters = body.get("filters") if isinstance(body.get("filters"), dict) else None
         try:
             result = answer_question(
                 question,
@@ -489,6 +614,9 @@ class Handler(BaseHTTPRequestHandler):
                 actions=[a.to_dict() for a in ACTION_STORE.all()],
                 cache=CHAT_CACHE,
                 history=CHAT_HISTORY,
+                context_cache=CHAT_CONTEXT,
+                filters=filters,
+                last_target=LAST_TARGET,
             )
         except Exception as exc:
             # Same rule as every other user-facing endpoint here: answer with
@@ -511,6 +639,7 @@ class Handler(BaseHTTPRequestHandler):
         question = (body.get("question") or "").strip()
         session_id = (body.get("session_id") or "default").strip() or "default"
         role = (body.get("role") or "employee").strip().lower()
+        filters = body.get("filters") if isinstance(body.get("filters"), dict) else None
 
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -530,6 +659,9 @@ class Handler(BaseHTTPRequestHandler):
                 actions=[a.to_dict() for a in ACTION_STORE.all()],
                 cache=CHAT_CACHE,
                 history=CHAT_HISTORY,
+                context_cache=CHAT_CONTEXT,
+                filters=filters,
+                last_target=LAST_TARGET,
             ):
                 self._write_sse(event, payload)
         except (BrokenPipeError, ConnectionResetError):

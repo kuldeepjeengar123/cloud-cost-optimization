@@ -42,6 +42,7 @@ from ..actions import (
 )
 from ..actions.executor import AWSExecutor
 from ..config import load_config
+from ..storage.postgres import PostgresStore
 from ..utils.logger import get_logger
 from . import audit
 from .policy import NotAuthorized, require_re_role
@@ -50,7 +51,11 @@ log = get_logger("mcp_server")
 
 CFG = load_config()
 STORE = ActionStore(CFG.output_folder / "pending_actions.json")
-DECISION_LOG = DecisionLogStore(CFG.output_folder / "decision_log.json")
+# Mirrors the web dashboard's decision-log persistence (server.py) so an
+# agent-initiated raise/stage/approve/decline lands in the same durable
+# Postgres table as a human's, not just the shared JSON file.
+PG_STORE = PostgresStore(CFG.database_url)
+DECISION_LOG = DecisionLogStore(CFG.output_folder / "decision_log.json", pg_store=PG_STORE)
 AUDIT_PATH = CFG.output_folder / "mcp_audit.jsonl"
 
 mcp = FastMCP(

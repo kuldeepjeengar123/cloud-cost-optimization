@@ -85,6 +85,17 @@
 #cbw-newchat:hover, #cbw-close:hover{background:rgba(255,255,255,.18);color:#fff}
 #cbw-newchat:focus-visible, #cbw-close:focus-visible{outline:2px solid rgba(255,255,255,.6);outline-offset:1px}
 
+/* Live dashboard filter strip (Target / date range / fleet filters), pushed
+   in by the host page via window.PlatformChat.setFilters() — see
+   finops_approval_prototype.html's syncChatFilters(). Hidden when there is
+   nothing to show. */
+#cbw-filters{
+  flex:none;padding:7px 14px;font-size:11px;color:var(--cbw-text-muted);
+  background:var(--surface-2,#f3efe7);border-bottom:1px solid var(--cbw-border);
+  white-space:nowrap;overflow-x:auto;
+}
+#cbw-filters[hidden]{display:none}
+
 #cbw-messages{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
 .cbw-msg{max-width:88%;font-size:13px;line-height:1.45}
 .cbw-msg.user{align-self:flex-end;background:var(--cbw-accent-soft);color:var(--cbw-accent-hover);

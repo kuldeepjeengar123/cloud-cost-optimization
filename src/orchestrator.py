@@ -99,7 +99,15 @@ def run_root_cause_agent(records: dict, signals: list[dict], cfg: PipelineConfig
         return signals
 
 
-def run_pipeline(cfg: PipelineConfig, on_event: Optional[EventCallback] = None) -> dict:
+def run_pipeline(
+    cfg: PipelineConfig, on_event: Optional[EventCallback] = None, skip_action_planning: bool = False
+) -> dict:
+    """``skip_action_planning=True`` runs every analysis agent (normalize,
+    context load, charts, analysis, summary, finalize) exactly as usual but
+    never calls ``plan_actions()`` or touches ``ActionStore`` — for a target
+    that already gets its recommendations from somewhere else (e.g. the "EC2
+    Rightsizing" target's live AWS fleet scan) and only wants this run's
+    analysis/insights, not a second, competing set of recommendations."""
     tracker = MetadataTracker()
     llm = LLMClient(cfg.llm)
     timings: dict[str, float] = {}
@@ -216,22 +224,26 @@ def run_pipeline(cfg: PipelineConfig, on_event: Optional[EventCallback] = None) 
     result = run_step5_finalize(cfg, combined, tracker)
     _done("step5", {"json": result["json_path"], "markdown": result["markdown_path"]})
 
-    # --- Actions: turn recommendations into applyable, stored actions ---
     run_id = Path(result["json_path"]).stem  # e.g. insights_20260604_101500
-    actions = plan_actions(run_id, combined, context["records"], backend=cfg.action_backend, cfg=cfg)
-    store = ActionStore(cfg.output_folder / "pending_actions.json")
-    store.upsert_many(actions)
     result["run_id"] = run_id
-    result["actions"] = [a.to_dict() for a in actions]
     # Surface where/how approved changes land so the UI can show the apply gate.
     result["action_backend"] = cfg.action_backend
     result["applied_folder"] = str(cfg.applied_folder)
-    _emit(on_event, "actions", {"actions": result["actions"]})
 
-    # --- Push the report card to Teams (if a webhook is configured) ---
-    posted = notify_teams(cfg, combined, actions)
-    if posted is not None:
-        result["teams_posted"] = posted
+    if not skip_action_planning:
+        # --- Actions: turn recommendations into applyable, stored actions ---
+        actions = plan_actions(run_id, combined, context["records"], backend=cfg.action_backend, cfg=cfg)
+        store = ActionStore(cfg.output_folder / "pending_actions.json")
+        store.upsert_many(actions)
+        result["actions"] = [a.to_dict() for a in actions]
+        _emit(on_event, "actions", {"actions": result["actions"]})
+
+        # --- Push the report card to Teams (if a webhook is configured) ---
+        posted = notify_teams(cfg, combined, actions)
+        if posted is not None:
+            result["teams_posted"] = posted
+    else:
+        result["actions"] = []
 
     _emit(on_event, "final", {"result": result})
     return result

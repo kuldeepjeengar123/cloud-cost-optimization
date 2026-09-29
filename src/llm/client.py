@@ -153,6 +153,29 @@ class LLMClient:
                 log.warning("OpenRouter request failed (%s); trying the next configured key if any.", exc)
                 continue
             if resp.status_code == 200:
+                # OpenRouter (and the upstream providers it fronts) can return
+                # HTTP 200 with an {"error": ...} body instead of a real
+                # completion — seen in practice as "Upstream error from
+                # Nvidia: Service temporarily overloaded" on the free
+                # Nemotron model. Treat that the same as a non-200 failure
+                # (try the next key) instead of returning it and letting a
+                # bare `KeyError: 'choices'` surface deeper in the call stack.
+                if not stream:
+                    try:
+                        body = resp.json()
+                    except ValueError:
+                        body = None
+                    if isinstance(body, dict) and "error" in body:
+                        err = body["error"]
+                        msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                        failures.append(f"key #{i + 1}: upstream error (HTTP 200 body): {msg}")
+                        log.warning(
+                            "OpenRouter returned HTTP 200 with an error body (%s); "
+                            "trying the next configured key if any.", msg,
+                        )
+                        if i + 1 < len(self._keys):
+                            continue
+                        break
                 return resp
             failures.append(f"key #{i + 1}: HTTP {resp.status_code}: {resp.text[:200]}")
             if resp.status_code in self._KEY_FALLBACK_STATUSES and i + 1 < len(self._keys):
@@ -170,7 +193,15 @@ class LLMClient:
         return "".join(self._iter_sse_deltas(payload))
 
     def _iter_sse_deltas(self, payload: dict):
-        """Yield each text delta from an OpenRouter SSE stream as it arrives."""
+        """Yield each text delta from an OpenRouter SSE stream as it arrives.
+
+        Raises ``LLMError`` on an error chunk (e.g. the upstream model was
+        temporarily overloaded) instead of silently swallowing it — a 200
+        status at the HTTP level doesn't guarantee every SSE chunk actually
+        carries content; see ``_request``'s handling of the same failure mode
+        for the non-streaming call. Without this, the stream would just end
+        with zero deltas and no indication anything went wrong.
+        """
         resp = self._request(payload, stream=True)
         for line in resp.iter_lines():
             if not line:
@@ -183,11 +214,19 @@ class LLMClient:
                 break
             try:
                 parsed = json.loads(chunk)
-                delta = parsed["choices"][0].get("delta", {}).get("content")
-                if delta:
-                    yield delta
-            except (json.JSONDecodeError, KeyError, IndexError):
+            except json.JSONDecodeError:
                 continue
+            if isinstance(parsed, dict) and "error" in parsed:
+                err = parsed["error"]
+                msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                log.warning("OpenRouter stream returned an error chunk: %s", msg)
+                raise LLMError(f"upstream error: {msg}")
+            try:
+                delta = parsed["choices"][0].get("delta", {}).get("content")
+            except (KeyError, IndexError):
+                continue
+            if delta:
+                yield delta
 
     def stream(self, system: str, user: str, *, model: str | None = None, max_tokens: int | None = None):
         """Yield response text deltas as they arrive.

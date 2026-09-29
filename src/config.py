@@ -126,9 +126,13 @@ class PipelineConfig:
     # for local/demo use — see server.py's _require_re_role().
     re_team_token: str = field(default_factory=lambda: os.getenv("RE_TEAM_TOKEN", ""))
 
-    # --- Chat widget (Redis cache + local SQLite question log) ---
+    # --- Durable store: every agent response (chat Q&A + pipeline/planner
+    # runs), written as JSON to Postgres. See src/storage/postgres.py.
+    database_url: str = field(
+        default_factory=lambda: os.getenv("DATABASE_URL", "postgresql://arrk:arrk@127.0.0.1:5432/arrk_docs_agent")
+    )
+    # --- Chat widget: Redis answer cache + short-lived per-session context ---
     redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"))
-    chat_db_path: Path = field(default=Path("outputs/chat_history.sqlite3"))
 
     def __post_init__(self) -> None:
         if not self.docs_folder.is_absolute():
@@ -137,8 +141,6 @@ class PipelineConfig:
             self.output_folder = self.project_root / self.output_folder
         if not self.applied_folder.is_absolute():
             self.applied_folder = self.project_root / self.applied_folder
-        if not self.chat_db_path.is_absolute():
-            self.chat_db_path = self.project_root / self.chat_db_path
         self.output_folder.mkdir(parents=True, exist_ok=True)
 
 

@@ -138,9 +138,41 @@
       this.opened = false;
       this.contexts = {};
       this.contextKey = "default";
+      // Dashboard filter state (Target, date range, fleet env/region/project)
+      // pushed in by the host page via setFilters() — see finops_approval_
+      // prototype.html's syncChatFilters(). Not per-context: it reflects
+      // what's on screen right now, same for every role, and survives
+      // "New chat" (that only resets conversation history, not dashboard
+      // state).
+      this.filters = {};
       this._buildDom();
       this._pollStatus();
       setInterval(() => this._pollStatus(), STATUS_POLL_MS);
+    }
+
+    /** Host page calls this whenever a dashboard filter changes (Target,
+     * date range, environment/region/project) so every question answers
+     * about what's actually selected right now, not a stale prior state —
+     * the filters are sent with every /api/chat/stream request and shown in
+     * the widget header so the user can see what the assistant thinks is
+     * currently selected. */
+    setFilters(filters) {
+      this.filters = filters || {};
+      this._renderFilters();
+    }
+
+    _renderFilters() {
+      if (!this.filtersEl) return;
+      const f = this.filters || {};
+      const parts = [];
+      if (f.target) parts.push("Target: " + f.target);
+      if (f.date_range) parts.push("Date: " + f.date_range);
+      const fleet = ["env", "region", "project"]
+        .filter((k) => f[k] && f[k] !== "all")
+        .map((k) => k[0].toUpperCase() + k.slice(1) + ": " + f[k]);
+      parts.push(...fleet);
+      this.filtersEl.textContent = parts.length ? parts.join(" · ") : "";
+      this.filtersEl.hidden = parts.length === 0;
     }
 
     /** Per-context state: independent message history + backend session id. */
@@ -207,6 +239,8 @@
       const form = el("form", { id: "cbw-form", onsubmit: (ev) => { ev.preventDefault(); this._send(); } },
         this.input, this.sendBtn);
 
+      this.filtersEl = el("div", { id: "cbw-filters", hidden: "" });
+
       const panel = el("div", { id: "cbw-panel", hidden: "" },
         el("div", { id: "cbw-head" },
           el("div", { id: "cbw-head-icon", "aria-hidden": "true" }, this._brandIcon()),
@@ -215,6 +249,7 @@
             this.modeEl),
           el("button", { id: "cbw-newchat", type: "button", "aria-label": "Start new chat", title: "Start new chat", onclick: () => this._newChat() }, this._newChatIcon()),
           el("button", { id: "cbw-close", type: "button", "aria-label": "Close chat", onclick: () => this._toggle(false) }, "✕")),
+        this.filtersEl,
         this.messagesEl,
         form);
       this.panel = panel;
@@ -369,7 +404,7 @@
         const res = await fetch("/api/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, session_id: store.sessionId, role: apiRole }),
+          body: JSON.stringify({ question, session_id: store.sessionId, role: apiRole, filters: this.filters }),
         });
         if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
 

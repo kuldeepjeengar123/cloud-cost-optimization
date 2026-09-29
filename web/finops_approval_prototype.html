@@ -30,7 +30,7 @@
         <span class="fl">Target</span>
         <select id="targetSelect" aria-label="Data / AWS target">
           <option value="local_csv">Local files (CSV)</option>
-          <option value="ec2_rightsizing">EC2 Rightsizing (t3.nano → t3.micro)</option>
+          <option value="ec2_rightsizing">EC2 Rightsizing</option>
           <option value="real_aws">Real AWS</option>
         </select>
       </div>
@@ -500,6 +500,7 @@ const RE_USER  = {name:"Priya Raman", initials:"PR", role:"Resource Engineering 
    1b. BACKEND INTEGRATION
    ========================================================================= */
 let liveMode = false;
+let awsAvailable = false;
 let latestPipelinePayload = null;
 
 /* =========================================================================
@@ -536,6 +537,21 @@ async function syncTargetFromServer(){
     if(data.target){ currentTarget = data.target; localStorage.setItem("awsTarget", currentTarget); }
   }catch(e){ /* offline/demo mode — keep whatever localStorage/default had */ }
   applyTargetToUI();
+  syncChatFilters();
+}
+
+/* Pushes the dashboard's current Target / date-range / fleet-filter
+   selection into the chat widget so every question is answered against what
+   is actually on screen right now, not a stale earlier selection — see
+   window.PlatformChat.setFilters() in chatbot.js. Called on load and on
+   every change to any of these controls. */
+function syncChatFilters(){
+  if(!window.PlatformChat) return;
+  window.PlatformChat.setFilters({
+    target: currentTarget,
+    date_range: document.getElementById("runDateRange").value || null,
+    env: filters.env, region: filters.region, project: filters.project,
+  });
 }
 
 async function apiGet(path){
@@ -651,12 +667,16 @@ async function loadState(fresh){
   // bypass the server's short fleet cache and force a live AWS read.
   const fleetPromise = apiGet("/api/aws/fleet" + (fresh ? "?fresh=1" : ""))
     .then(fleetData => {
-      fleet = fleetData.available
-        ? fleetData.instances.map(i => mapInstance(i, fleet))
-        : (fleet.length ? fleet : FLEET_SEED.map(i => ({...i, origType:i.type})));
+      awsAvailable = !!fleetData.available;
+      // Real AWS is the only source this table shows — never fall back to
+      // FLEET_SEED here (that seed is offline-demo data for when the backend
+      // itself cannot be reached at all, see resetState()). If AWS can't be
+      // read, the table says so instead of quietly showing fake instances.
+      fleet = awsAvailable ? fleetData.instances.map(i => mapInstance(i, fleet)) : [];
     })
     .catch(() => {
-      fleet = fleet.length ? fleet : FLEET_SEED.map(i => ({...i, origType:i.type}));
+      awsAvailable = false;
+      fleet = [];
     });
 
   const actionsPromise = Promise.all([apiGet("/api/actions"), apiGet("/api/decisions")])
@@ -677,9 +697,13 @@ async function loadState(fresh){
 function updateProvenanceBadge(){
   const el = document.getElementById("provStatus");
   if(!el) return;
-  el.innerHTML = liveMode
-    ? `<b style="color:var(--good)">● Live</b> — connected to the pipeline backend, ${recs.length} action(s) loaded`
-    : `<b style="color:var(--warning)">● Demo data</b> — backend unreachable, showing static seed data`;
+  if(!liveMode){
+    el.innerHTML = `<b style="color:var(--warning)">● Demo data</b> — backend unreachable, showing static seed data`;
+  }else if(!awsAvailable){
+    el.innerHTML = `<b style="color:var(--warning)">● AWS unreachable</b> — backend is up but the live EC2 fleet read failed, ${recs.length} action(s) loaded`;
+  }else{
+    el.innerHTML = `<b style="color:var(--good)">● Live</b> — connected to the pipeline backend, ${recs.length} action(s) loaded`;
+  }
 }
 
 /* =========================================================================
@@ -1281,22 +1305,8 @@ function fleetStateSummaryText(list, totalAll){
   if(totalAll != null && totalAll !== c.total) text += ` (${totalAll} total in the account)`;
   return text;
 }
-/* The nano <-> micro swap the backend plans actions from, mirrored here so the
-   table can show what each type would be resized to. Keep in step with
-   planner._NANO_MICRO_SWAP: nano and micro swap for each other, running or
-   stopped alike; anything else has no automatic rightsizing suggestion. */
-const NANO_MICRO_SWAP = {nano:"micro", micro:"nano"};
-function rightsizeTargetFor(type){
-  const dot = (type || "").indexOf(".");
-  if(dot < 1) return null;
-  const family = type.slice(0, dot), size = type.slice(dot + 1);
-  const swap = NANO_MICRO_SWAP[size];
-  return swap ? `${family}.${swap}` : null;
-}
-/* Counts by instance type and state, plus what each type would be resized to.
-   This is the table that answers "what have I actually got, what is running,
-   and what would rightsizing change it to" — the same question the nano <->
-   micro recommendations are generated from. */
+/* Counts by instance type and state — just what's actually in the fleet and
+   what's running vs. stopped, no rightsizing suggestion. */
 function drawInstanceStateTable(){
   const panel = document.getElementById("instancePanel");
   const host = document.getElementById("tblInstanceStates");
@@ -1314,7 +1324,9 @@ function drawInstanceStateTable(){
   if(!list.length){
     host.innerHTML = `<p class="csub" style="margin:0;padding:10px">`
       + (fleet.length ? "No instances match the current filters."
-                      : "No instances read yet — the fleet is empty or AWS is unreachable.")
+                      : (awsAvailable
+                          ? "The AWS fleet read came back empty — no instances in this account/region."
+                          : "AWS is unreachable right now, so no live instance data is shown. Check server credentials/logs and use Refresh to retry."))
       + `</p>`;
     if(sub) sub.textContent = fleet.length
       ? "No instances match the current filters."
@@ -1331,20 +1343,17 @@ function drawInstanceStateTable(){
     .sort((a,b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .map(([type, items]) => {
       const c = fleetStateCounts(items);
-      const swap = rightsizeTargetFor(type);
       return [type, String(c.total), String(c.running), String(c.stopped),
-              money2(items.reduce((s,i) => s + instCost(i), 0)),
-              swap ? "→ " + swap : "—"];
+              money2(items.reduce((s,i) => s + instCost(i), 0))];
     });
   const all = fleetStateCounts(list);
   rows.push(["All types", String(all.total), String(all.running), String(all.stopped),
-             money2(list.reduce((s,i) => s + instCost(i), 0)), ""]);
+             money2(list.reduce((s,i) => s + instCost(i), 0))]);
   renderTable(host,
     [{label:"Instance type"},{label:"Instances", num:true},{label:"Running", num:true},
-     {label:"Stopped", num:true},{label:"USD / month", num:true},{label:"Rightsizing suggestion"}],
+     {label:"Stopped", num:true},{label:"USD / month", num:true}],
     rows);
-  if(sub) sub.textContent = fleetStateSummaryText(list, fleet.length)
-    + ". Nano and micro are suggested for a swap whether running or stopped.";
+  if(sub) sub.textContent = fleetStateSummaryText(list, fleet.length);
 }
 function drawFleetChart(){
   const list = fleetInScope();
@@ -1915,9 +1924,12 @@ document.getElementById("targetSelect").addEventListener("change", e => {
   localStorage.setItem("awsTarget", currentTarget);
   applyTargetToUI();
   renderAll();
+  syncChatFilters();
   toast("wait", "Target set to " + (TARGET_LABEL[currentTarget] || currentTarget),
     "Takes effect on the next \"Start run\".");
 });
+
+document.getElementById("runDateRange").addEventListener("change", syncChatFilters);
 
 document.getElementById("roleEmp").addEventListener("click", () => setRole("emp"));
 document.getElementById("roleRe").addEventListener("click",  () => setRole("re"));
@@ -1935,6 +1947,7 @@ document.getElementById("resetBtn").addEventListener("click", async (ev) => {
   ["fEnv","fRegion","fProject"].forEach(id => document.getElementById(id).value = "all");
   filters.env = filters.region = filters.project = "all";
   setRole("emp");
+  syncChatFilters();
   toast("wait","Prototype reset", "Fleet, recommendations and the decision log are back to their seed state.");
 });
 
@@ -1963,9 +1976,9 @@ document.getElementById("resetTestDataBtn").addEventListener("click", async (ev)
   clearBusy(btn);
 });
 
-document.getElementById("fEnv").addEventListener("change", e => { filters.env = e.target.value; renderAll(); });
-document.getElementById("fRegion").addEventListener("change", e => { filters.region = e.target.value; renderAll(); });
-document.getElementById("fProject").addEventListener("change", e => { filters.project = e.target.value; renderAll(); });
+document.getElementById("fEnv").addEventListener("change", e => { filters.env = e.target.value; renderAll(); syncChatFilters(); });
+document.getElementById("fRegion").addEventListener("change", e => { filters.region = e.target.value; renderAll(); syncChatFilters(); });
+document.getElementById("fProject").addEventListener("change", e => { filters.project = e.target.value; renderAll(); syncChatFilters(); });
 
 document.addEventListener("click", ev => {
   const t = ev.target.closest("button");

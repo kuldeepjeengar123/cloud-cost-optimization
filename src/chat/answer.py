@@ -14,8 +14,9 @@ Two modes, chosen automatically per request:
 
 Both modes share one negative-prompting rule set so the widget can't be
 steered into answering questions unrelated to this platform, and both are
-cached (``AnswerCache``, Redis-backed with an in-process fallback) and
-logged (``ChatHistoryStore``, local SQLite) via ``src.chat.memory``.
+cached (``AnswerCache``, Redis-backed with an in-process fallback), given
+short-term follow-up context (``ChatContextCache``, also Redis) and logged
+(``ChatHistoryStore``, Postgres) via ``src.chat.memory``.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ..llm.client import LLMClient, LLMError
 from ..utils.logger import get_logger
-from .memory import AnswerCache, ChatHistoryStore
+from .memory import AnswerCache, ChatContextCache, ChatHistoryStore
 
 if TYPE_CHECKING:
     from ..config import PipelineConfig
@@ -205,6 +206,64 @@ def _most_recent(items: list[dict], timestamp_key: str) -> list[dict]:
     return sorted(items, key=lambda a: a.get(timestamp_key) or "", reverse=True)[:_MAX_ITEMS_PER_SECTION]
 
 
+def _filters_signature(filters: Optional[dict]) -> str:
+    """Stable string key for whatever the dashboard's filter state is right
+    now — folded into the answer cache key and the conversation-context scope
+    so a filter change (Target, date range, env/region/project) is treated
+    the same as a new pipeline run: it never reuses a cached or
+    previous-turn answer that was about a different selection."""
+    return json.dumps(filters or {}, sort_keys=True, default=str)
+
+
+def _filters_block(filters: Optional[dict], last_target: Optional[str]) -> str:
+    """Tells the model exactly what's selected in the dashboard's Target,
+    date-range, and fleet filters right now — this is the live UI state, and
+    may be ahead of the data below if the user hasn't clicked "Start run"
+    since changing it. Without this, the assistant only knows about
+    whichever run last completed, so a filter change with no new run yet
+    would silently go unmentioned instead of being called out."""
+    if not filters:
+        return ""
+    target = filters.get("target")
+    lines = [
+        "Dashboard filters currently selected in the UI right now (this is "
+        "live, current state — answer about *this*, not about an older "
+        "selection from earlier in the conversation):"
+    ]
+    if target:
+        lines.append(f"- Target: {target}")
+    if filters.get("date_range"):
+        lines.append(f"- Date range: {filters['date_range']}")
+    for key, label in (("env", "Environment filter"), ("region", "Region filter"), ("project", "Project filter")):
+        val = filters.get(key)
+        if val and val != "all":
+            lines.append(f"- {label}: {val}")
+    if target and last_target and target != last_target:
+        lines.append(
+            f"- IMPORTANT: the user has selected \"{target}\" in the Target dropdown, but the "
+            f"cost data and recommendations available below are still from the last completed "
+            f"run, which used \"{last_target}\". Say plainly that the dashboard has not been "
+            f"refreshed for the newly selected target yet, and that clicking \"Start run\" will "
+            f"do that — don't answer as if the data below already reflects \"{target}\"."
+        )
+    return "\n".join(lines)
+
+
+def _context_block(recent_turns: Optional[list[dict]]) -> str:
+    """Short "what we already discussed" block from ``ChatContextCache``, so
+    a follow-up question ("what about last month?") can be answered without
+    the user having to restate what it's a follow-up to. Empty when Redis
+    has no context for this session (fresh session, cold cache, or Redis
+    unavailable) — the prompt then reads exactly as it did before this was
+    added."""
+    if not recent_turns:
+        return ""
+    lines = ["Recent conversation in this session (most recent last — for context only, not a source of cost data):"]
+    for turn in recent_turns:
+        lines.append(f"- Q: {turn.get('question', '')}\n  A: {turn.get('answer', '')}")
+    return "\n".join(lines)
+
+
 def _actions_summary(actions: Optional[list[dict]], role: str) -> str:
     """Live approval-queue snapshot, independent of any pipeline run's
     insights file — included in every prompt (info or rag mode) so the
@@ -270,11 +329,18 @@ def _actions_summary(actions: Optional[list[dict]], role: str) -> str:
 
 def _fallback_reply(mode: str, pipeline_running: bool, role: str = ROLE_EMPLOYEE) -> dict:
     """Used when the LLM is unavailable/unreachable — the widget must always
-    say *something* useful rather than error out."""
+    say *something* useful rather than error out.
+
+    Marked ``_no_cache`` so a transient failure (LLM rate-limited, briefly
+    unreachable, or returned malformed JSON for one request) never gets
+    written into ``AnswerCache`` — that would otherwise "lock in" the failure
+    for every repeat of the same question for a full CACHE_TTL_SECONDS, even
+    after the LLM has recovered. See ``answer_question``/``stream_answer_question``.
+    """
     if mode == MODE_RAG:
-        return {"answer": "The assistant could not produce a grounded answer for that question. Try rephrasing it.", "citations": []}
+        return {"answer": "The assistant could not produce a grounded answer for that question. Try rephrasing it.", "citations": [], "_no_cache": True}
     note = " A pipeline run is in progress; full data will be available once it finishes." if pipeline_running else ""
-    return {"answer": PLATFORM_DESCRIPTION + "\n\n" + _role_context(role) + note, "citations": []}
+    return {"answer": PLATFORM_DESCRIPTION + "\n\n" + _role_context(role) + note, "citations": [], "_no_cache": True}
 
 
 def answer_question(
@@ -287,6 +353,9 @@ def answer_question(
     actions: Optional[list[dict]] = None,
     cache: Optional[AnswerCache] = None,
     history: Optional[ChatHistoryStore] = None,
+    context_cache: Optional[ChatContextCache] = None,
+    filters: Optional[dict] = None,
+    last_target: Optional[str] = None,
 ) -> dict:
     """Return ``{"answer", "citations", "insights_file", "mode"}``.
 
@@ -295,7 +364,11 @@ def answer_question(
     does on the dashboard, without changing the underlying data or the scope
     rules in ``NEGATIVE_PROMPT_RULES``. ``actions`` is the current approval
     queue (``Action.to_dict()`` for every action the server holds) — live
-    state, included regardless of mode; see ``_actions_summary``.
+    state, included regardless of mode; see ``_actions_summary``. ``filters``
+    is the dashboard's current Target/date-range/fleet-filter selection (from
+    the client, may be ahead of ``last_target`` — the target the last
+    completed run actually used — if the user hasn't clicked "Start run"
+    since changing it); see ``_filters_block``.
 
     Never raises for expected conditions (no run yet, no API key, LLM
     failure) — those become a plain-text ``answer`` explaining what happened
@@ -317,26 +390,49 @@ def answer_question(
     # The queue can change between two questions with identical mode/question/
     # role, so it's folded into the cache key too — otherwise a queue-count
     # answer would go stale for up to CACHE_TTL_SECONDS after being asked once.
+    # The dashboard's filter selection is folded in the same way: changing
+    # Target/date-range/fleet filters must never reuse an answer cached (or a
+    # conversation turn kept) under the previous selection.
     queue_snapshot = _actions_summary(actions, role)
+    filters_sig = _filters_signature(filters)
+    cache_extra = f"{queue_snapshot}\n{filters_sig}"
+    # Scopes the conversation-context window to exactly this mode+insights
+    # file+filters: once a new pipeline run produces a different insights
+    # file, or the user changes a filter, older turns stop counting as
+    # context instead of leaking stale (possibly unrelated) data into a
+    # fresh answer.
+    context_scope = f"{mode}:{insights_file}:{filters_sig}"
     if cache is not None:
-        cached = cache.get(mode, insights_file, question, role, queue_snapshot)
+        cached = cache.get(mode, insights_file, question, role, cache_extra)
         if cached is not None:
+            if context_cache is not None:
+                context_cache.add_turn(session_id, question, cached.get("answer", ""), context_scope)
             return {**cached, "insights_file": insights_file, "mode": mode, "cached": True}
 
+    filters_block = _filters_block(filters, last_target)
+    convo_context = _context_block(
+        context_cache.recent(session_id, context_scope) if context_cache is not None else None
+    )
     if mode == MODE_INFO:
-        result = _answer_info(question, cfg, pipeline_running, role, queue_snapshot)
+        result = _answer_info(question, cfg, pipeline_running, role, queue_snapshot, convo_context, filters_block)
     else:
-        result = _answer_rag(question, cfg, insights_path, role, queue_snapshot)
+        result = _answer_rag(question, cfg, insights_path, role, queue_snapshot, convo_context, filters_block)
 
-    if cache is not None:
-        cache.set(mode, insights_file, question, result, role, queue_snapshot)
+    no_cache = result.pop("_no_cache", False)
+    if cache is not None and not no_cache:
+        cache.set(mode, insights_file, question, result, role, cache_extra)
     if history is not None:
         history.record(session_id, mode, question, result["answer"], insights_file, result["citations"])
+    if context_cache is not None:
+        context_cache.add_turn(session_id, question, result["answer"], context_scope)
 
     return {**result, "insights_file": insights_file, "mode": mode}
 
 
-def _answer_info(question: str, cfg: "PipelineConfig", pipeline_running: bool, role: str = ROLE_EMPLOYEE, queue_snapshot: str = "") -> dict:
+def _answer_info(
+    question: str, cfg: "PipelineConfig", pipeline_running: bool,
+    role: str = ROLE_EMPLOYEE, queue_snapshot: str = "", convo_context: str = "", filters_block: str = "",
+) -> dict:
     try:
         client = LLMClient(cfg.llm)
     except LLMError:
@@ -346,6 +442,10 @@ def _answer_info(question: str, cfg: "PipelineConfig", pipeline_running: bool, r
     if pipeline_running:
         context += "\n\n(A pipeline run is currently in progress — no fresh cost data is available yet.)"
     context += "\n\n" + queue_snapshot
+    if filters_block:
+        context += "\n\n" + filters_block
+    if convo_context:
+        context += "\n\n" + convo_context
     system_prompt = INFO_SYSTEM_PROMPT + "\n\n" + _role_context(role)
     user_prompt = f"Question: {question}\n\nPlatform description:\n{context}"
     result = client.complete_json(system_prompt, user_prompt, model=cfg.llm.model_chat)
@@ -354,23 +454,28 @@ def _answer_info(question: str, cfg: "PipelineConfig", pipeline_running: bool, r
     return {"answer": str(result.get("answer")), "citations": [str(c) for c in (result.get("citations") or [])]}
 
 
-def _answer_rag(question: str, cfg: "PipelineConfig", path: Path, role: str = ROLE_EMPLOYEE, queue_snapshot: str = "") -> dict:
+def _answer_rag(
+    question: str, cfg: "PipelineConfig", path: Path,
+    role: str = ROLE_EMPLOYEE, queue_snapshot: str = "", convo_context: str = "", filters_block: str = "",
+) -> dict:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         log.warning("Could not read %s (%s)", path, exc)
-        return {"answer": "The latest run's results could not be read. Try running the analysis again.", "citations": []}
+        return {"answer": "The latest run's results could not be read. Try running the analysis again.", "citations": [], "_no_cache": True}
 
     try:
         client = LLMClient(cfg.llm)
     except LLMError as exc:
-        return {"answer": f"Cannot answer right now: {exc}", "citations": []}
+        return {"answer": f"Cannot answer right now: {exc}", "citations": [], "_no_cache": True}
 
     system_prompt = RAG_SYSTEM_PROMPT + "\n\n" + _role_context(role)
     user_prompt = (
         f"Question: {question}\n\nContext (from {path.name}):\n"
         + json.dumps(_context_slice(payload), default=str, indent=2)
         + "\n\n" + queue_snapshot
+        + (("\n\n" + filters_block) if filters_block else "")
+        + (("\n\n" + convo_context) if convo_context else "")
     )
     result = client.complete_json(system_prompt, user_prompt, model=cfg.llm.model_chat)
     if not isinstance(result, dict) or not result.get("answer"):
@@ -380,7 +485,7 @@ def _answer_rag(question: str, cfg: "PipelineConfig", path: Path, role: str = RO
 
 def _stream_prompt(
     mode: str, question: str, insights_path: Optional[Path], pipeline_running: bool,
-    role: str = ROLE_EMPLOYEE, queue_snapshot: str = "",
+    role: str = ROLE_EMPLOYEE, queue_snapshot: str = "", convo_context: str = "", filters_block: str = "",
 ) -> tuple[str, str]:
     """Build (system, user) prompts for the streaming path. Raises OSError /
     json.JSONDecodeError the same way ``_answer_rag`` does if the insights
@@ -391,6 +496,10 @@ def _stream_prompt(
         if pipeline_running:
             context += "\n\n(A pipeline run is currently in progress — no fresh cost data is available yet.)"
         context += "\n\n" + queue_snapshot
+        if filters_block:
+            context += "\n\n" + filters_block
+        if convo_context:
+            context += "\n\n" + convo_context
         system = INFO_STREAM_SYSTEM_PROMPT + "\n\n" + _role_context(role)
         return system, f"Question: {question}\n\nPlatform description:\n{context}"
 
@@ -400,6 +509,8 @@ def _stream_prompt(
         f"Question: {question}\n\nContext (from {insights_path.name}):\n"
         + json.dumps(_context_slice(payload), default=str, indent=2)
         + "\n\n" + queue_snapshot
+        + (("\n\n" + filters_block) if filters_block else "")
+        + (("\n\n" + convo_context) if convo_context else "")
     )
     return system, user_prompt
 
@@ -414,6 +525,9 @@ def stream_answer_question(
     actions: Optional[list[dict]] = None,
     cache: Optional[AnswerCache] = None,
     history: Optional[ChatHistoryStore] = None,
+    context_cache: Optional[ChatContextCache] = None,
+    filters: Optional[dict] = None,
+    last_target: Optional[str] = None,
 ):
     """Generator variant of ``answer_question`` for the popup widget's SSE
     endpoint (``POST /api/chat/stream``).
@@ -444,16 +558,32 @@ def stream_answer_question(
         return
 
     queue_snapshot = _actions_summary(actions, role)
-    cached = cache.get(mode, insights_file, question, role, queue_snapshot) if cache is not None else None
+    filters_sig = _filters_signature(filters)
+    cache_extra = f"{queue_snapshot}\n{filters_sig}"
+    context_scope = f"{mode}:{insights_file}:{filters_sig}"
+    cached = cache.get(mode, insights_file, question, role, cache_extra) if cache is not None else None
     if cached is not None:
         text = str(cached.get("answer", ""))
+        if context_cache is not None:
+            context_cache.add_turn(session_id, question, text, context_scope)
         yield "delta", {"text": text}
         yield "done", {"answer": text, "citations": [], "cached": True}
         return
 
+    filters_block = _filters_block(filters, last_target)
+    convo_context = _context_block(
+        context_cache.recent(session_id, context_scope) if context_cache is not None else None
+    )
     chunks: list[str] = []
+    # A transient failure (LLM unreachable, rate-limited, an interrupted
+    # stream, or one that yielded nothing) must never be cached — that would
+    # "lock in" the failure for every repeat of this question for up to
+    # CACHE_TTL_SECONDS, even after the LLM has recovered.
+    should_cache = True
     try:
-        system, user_prompt = _stream_prompt(mode, question, insights_path, pipeline_running, role, queue_snapshot)
+        system, user_prompt = _stream_prompt(
+            mode, question, insights_path, pipeline_running, role, queue_snapshot, convo_context, filters_block
+        )
         client = LLMClient(cfg.llm)
         for delta in client.stream(system, user_prompt, model=cfg.llm.model_chat):
             chunks.append(delta)
@@ -462,17 +592,26 @@ def stream_answer_question(
         # Setup failure (no API key, unreadable insights file) — nothing streamed yet.
         text = f"Cannot answer right now: {exc}" if mode == MODE_RAG else _fallback_reply(MODE_INFO, pipeline_running, role)["answer"]
         chunks = [text]
+        should_cache = False
         yield "delta", {"text": text}
     except Exception as exc:
         # Mid-stream transport failure — some deltas may already be on the wire.
         log.warning("Chat stream interrupted: %s", exc)
         note = "\n\n[Response interrupted — please try asking again.]"
         chunks.append(note)
+        should_cache = False
         yield "delta", {"text": note}
 
-    full_text = "".join(chunks).strip() or _fallback_reply(mode, pipeline_running, role)["answer"]
-    if cache is not None:
-        cache.set(mode, insights_file, question, {"answer": full_text, "citations": []}, role, queue_snapshot)
+    raw_text = "".join(chunks).strip()
+    if raw_text:
+        full_text = raw_text
+    else:
+        full_text = _fallback_reply(mode, pipeline_running, role)["answer"]
+        should_cache = False
+    if cache is not None and should_cache:
+        cache.set(mode, insights_file, question, {"answer": full_text, "citations": []}, role, cache_extra)
     if history is not None:
         history.record(session_id, mode, question, full_text, insights_file, [])
+    if context_cache is not None:
+        context_cache.add_turn(session_id, question, full_text, context_scope)
     yield "done", {"answer": full_text, "citations": [], "cached": False}

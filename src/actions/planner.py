@@ -127,9 +127,9 @@ def _plan_nano_micro_swap_actions(run_id: str, cfg: "PipelineConfig", executor) 
 
         instance_id = inst["InstanceId"]
         if size == "nano":
-            direction, reason, impact = "Upsize", "undersized for steady load", "medium"
+            direction, reason, impact = "Upgrade", "undersized for steady load", "medium"
         else:
-            direction, reason, impact = "Downsize", "oversized for an idle/low-traffic workload", "low"
+            direction, reason, impact = "Downgrade", "oversized for an idle/low-traffic workload", "low"
         title = (f"{direction} {instance_id} from {itype} to {target_type} "
                  f"({reason}) — currently {state}")
 
@@ -143,6 +143,47 @@ def _plan_nano_micro_swap_actions(run_id: str, cfg: "PipelineConfig", executor) 
             impact=impact,
             backend="aws",
         ))
+    return actions
+
+
+def _finalize_action(action: Action, cfg: "PipelineConfig | None", executor, seen: set[str]) -> Action | None:
+    """Dedupe against ``seen``, then fill in the preview + risk assessment.
+    Returns ``None`` for a duplicate (shared by plan_actions() and
+    plan_ec2_rightsizing_actions() so both apply the exact same preview/risk
+    treatment to every action, CSV-matched or fleet-scanned alike)."""
+    if action.id in seen:
+        return None
+    seen.add(action.id)
+    if cfg is not None:
+        _attach_preview(action, cfg, executor)
+        if action.executable and getattr(cfg.capabilities, "assess_risk", True):
+            from .risk import assess_risk
+
+            assess_risk(action, cfg, executor)
+    return action
+
+
+def plan_ec2_rightsizing_actions(run_id: str, cfg: "PipelineConfig") -> list[Action]:
+    """Action plan for the "EC2 Rightsizing" target: reads the live AWS fleet
+    directly and applies only the deterministic nano<->micro swap (see
+    _plan_nano_micro_swap_actions) — no local CSV data is read, and no LLM
+    recommendation is matched against an entity catalog. Unlike plan_actions(),
+    this never falls back to CSV-derived recommendations for this target.
+    """
+    from .executor import AWSExecutor
+
+    executor = AWSExecutor(cfg)
+    actions: list[Action] = []
+    seen: set[str] = set()
+    for action in _plan_nano_micro_swap_actions(run_id, cfg, executor):
+        finalized = _finalize_action(action, cfg, executor, seen)
+        if finalized is not None:
+            actions.append(finalized)
+
+    log.info(
+        "Planned %s EC2 rightsizing action(s) from the live AWS fleet (no CSV)",
+        len(actions),
+    )
     return actions
 
 
@@ -202,17 +243,9 @@ def plan_actions(
     seen: set[str] = set()
 
     def _collect(action: Action) -> None:
-        """Drop duplicates, then fill in the preview + risk assessment."""
-        if action.id in seen:
-            return
-        seen.add(action.id)
-        if cfg is not None:
-            _attach_preview(action, cfg, executor)
-            if action.executable and getattr(cfg.capabilities, "assess_risk", True):
-                from .risk import assess_risk
-
-                assess_risk(action, cfg, executor)
-        actions.append(action)
+        finalized = _finalize_action(action, cfg, executor, seen)
+        if finalized is not None:
+            actions.append(finalized)
 
     for rec in recommendations:
         if isinstance(rec, dict):

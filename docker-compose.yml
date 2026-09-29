@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: arrk_docs_agent_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arrk
+      POSTGRES_PASSWORD: arrk
+      POSTGRES_DB: arrk_docs_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      # Named volume: agent responses persist across `docker compose restart`
+      # and machine reboots — this is the durable store, unlike the cache below.
+      - arrk_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arrk -d arrk_docs_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: arrk_docs_agent_redis
+    restart: unless-stopped
+    # No volume and snapshotting/AOF disabled on purpose: the chat cache and
+    # per-session context are meant to be wiped whenever Redis restarts, so a
+    # stale cached answer can never outlive the process that served it.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  arrk_pg_data:
