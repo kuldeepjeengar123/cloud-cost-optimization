@@ -37,7 +37,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from ...llm.client import LLMClient, LLMError
+from ...llm.client import LLMClient, LLMError, LLMQuotaExceededError
 from ...prompts import load_prompt
 from ...utils.logger import get_logger
 from .guardrails import redact_secrets, scrub_user_input
@@ -276,6 +276,26 @@ def _actions_summary(actions: Optional[list[dict]], role: str) -> str:
     return "\n".join(lines)
 
 
+# Shown instead of the raw per-key failure text (see LLMClient._request) when
+# every configured OpenRouter key was rejected for a quota/auth reason — short
+# and actionable, rather than a wall of raw HTTP/JSON the user can't act on.
+QUOTA_EXCEEDED_MESSAGE = (
+    "The chat assistant has hit its API quota for today. Please try again "
+    "later, or add credits to the configured OpenRouter key(s) to raise the "
+    "daily limit."
+)
+
+
+def _llm_error_message(exc: Exception) -> str:
+    """Short, user-facing text for an LLM failure — a quota/auth rejection on
+    every configured key gets the curated message above; anything else (a
+    transport error, a malformed response) keeps the original detail, which
+    is already short enough to be useful rather than raw per-key noise."""
+    if isinstance(exc, LLMQuotaExceededError):
+        return QUOTA_EXCEEDED_MESSAGE
+    return f"Cannot answer right now: {exc}"
+
+
 def _fallback_reply(mode: str, pipeline_running: bool, role: str = ROLE_EMPLOYEE) -> dict:
     """Used when the LLM is unavailable/unreachable — the widget must always
     say *something* useful rather than error out.
@@ -405,7 +425,12 @@ def _answer_info(
         context += "\n\n" + convo_context
     system_prompt = INFO_SYSTEM_PROMPT + "\n\n" + _role_context(role)
     user_prompt = f"Question: {question}\n\nPlatform description:\n{context}"
-    result = client.complete_json(system_prompt, user_prompt, model=cfg.llm.model_chat)
+    try:
+        result = client.complete_json(system_prompt, user_prompt, model=cfg.llm.model_chat)
+    except LLMQuotaExceededError:
+        return {"answer": QUOTA_EXCEEDED_MESSAGE, "citations": [], "_no_cache": True}
+    except LLMError:
+        return _fallback_reply(MODE_INFO, pipeline_running, role)
     if not isinstance(result, dict) or not result.get("answer"):
         return _fallback_reply(MODE_INFO, pipeline_running, role)
     return {"answer": str(result.get("answer")), "citations": [str(c) for c in (result.get("citations") or [])]}
@@ -424,7 +449,7 @@ def _answer_rag(
     try:
         client = LLMClient(cfg.llm)
     except LLMError as exc:
-        return {"answer": f"Cannot answer right now: {exc}", "citations": [], "_no_cache": True}
+        return {"answer": _llm_error_message(exc), "citations": [], "_no_cache": True}
 
     system_prompt = RAG_SYSTEM_PROMPT + "\n\n" + _role_context(role)
     user_prompt = (
@@ -434,7 +459,10 @@ def _answer_rag(
         + (("\n\n" + filters_block) if filters_block else "")
         + (("\n\n" + convo_context) if convo_context else "")
     )
-    result = client.complete_json(system_prompt, user_prompt, model=cfg.llm.model_chat)
+    try:
+        result = client.complete_json(system_prompt, user_prompt, model=cfg.llm.model_chat)
+    except LLMError as exc:
+        return {"answer": _llm_error_message(exc), "citations": [], "_no_cache": True}
     if not isinstance(result, dict) or not result.get("answer"):
         return _fallback_reply(MODE_RAG, False, role)
     return {"answer": str(result.get("answer")), "citations": [str(c) for c in (result.get("citations") or [])]}
@@ -551,9 +579,16 @@ def stream_answer_question(
             delta = redact_secrets(delta, cfg)
             chunks.append(delta)
             yield "delta", {"text": delta}
+    except LLMQuotaExceededError:
+        # Every configured key is out of quota — nothing streamed yet.
+        text = QUOTA_EXCEEDED_MESSAGE
+        chunks = [text]
+        should_cache = False
+        yield "delta", {"text": text}
     except (LLMError, OSError, json.JSONDecodeError) as exc:
-        # Setup failure (no API key, unreadable insights file) — nothing streamed yet.
-        text = f"Cannot answer right now: {exc}" if mode == MODE_RAG else _fallback_reply(MODE_INFO, pipeline_running, role)["answer"]
+        # Setup failure (a non-quota LLM error, or an unreadable insights
+        # file) — nothing streamed yet.
+        text = _llm_error_message(exc) if mode == MODE_RAG else _fallback_reply(MODE_INFO, pipeline_running, role)["answer"]
         chunks = [text]
         should_cache = False
         yield "delta", {"text": text}

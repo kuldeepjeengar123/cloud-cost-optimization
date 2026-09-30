@@ -28,11 +28,7 @@
     <div class="topright">
       <div class="target-picker">
         <span class="fl">Target</span>
-        <select id="targetSelect" aria-label="Data / AWS target">
-          <option value="local_csv">Local files (CSV)</option>
-          <option value="ec2_rightsizing">EC2 Rightsizing</option>
-          <option value="real_aws">Real AWS</option>
-        </select>
+        <span class="chip mono" id="targetSelect" data-target="real_aws" aria-label="Data / AWS target">AWS</span>
       </div>
       <div class="roles" role="tablist" aria-label="Dashboard role">
         <button class="role-btn" id="roleEmp" role="tab" aria-selected="true" aria-controls="viewEmp">
@@ -64,19 +60,18 @@
   </header>
 
   <!-- ============ Live EC2 instances — type and state ============
-       Sits directly under the Target dropdown because it belongs to the "EC2
-       Rightsizing" target: which instance types exist right now, and how many
-       of each are running or stopped. Shown only while that target is
-       selected (see drawInstanceStateTable) — starts hidden so picking any
-       other target never flashes it. Read live from describe_instances, so it
-       is populated before any pipeline run, in both roles. -->
+       Which instance types exist right now, and how many of each are
+       running or stopped — always shown, since the nano/micro rightsizing
+       scan always runs against the live fleet (see drawInstanceStateTable).
+       Read live from describe_instances, so it is populated before any
+       pipeline run, in both roles. -->
   <div class="card" id="instancePanel" style="margin-bottom:14px" hidden>
     <div class="chart-head">
       <div>
         <h3>EC2 instances — type and state</h3>
         <p class="csub" id="instancePanelSub">Waiting on the fleet read.</p>
       </div>
-      <span class="chip mono" id="instancePanelTarget">local_csv</span>
+      <span class="chip mono" id="instancePanelTarget">AWS</span>
     </div>
     <div class="table-view" id="tblInstanceStates"></div>
   </div>
@@ -112,8 +107,8 @@
       <div id="runBody" hidden>
         <div class="filters" style="margin-top:12px">
           <span class="fl">Target</span>
-          <span class="chip mono" id="runTargetLabel">local_csv</span>
-          <span style="font-size:12.5px;color:var(--text-muted)">Set from the Target dropdown in the header above.</span>
+          <span class="chip mono" id="runTargetLabel">AWS</span>
+          <span style="font-size:12.5px;color:var(--text-muted)">The only target this dashboard supports.</span>
           <span class="fl">Date range</span>
           <select id="runDateRange" aria-label="Date range">
             <option value="" selected>All available data</option>
@@ -517,20 +512,27 @@ let awsAvailable = false;
 let latestPipelinePayload = null;
 
 /* =========================================================================
-   1a. TARGET SELECTOR (Local files / EC2 Rightsizing / Real AWS)
+   1a. TARGET SELECTOR (AWS — the only target)
    ------------------------------------------------------------------------
    Persisted per-browser in localStorage so it survives a reload, but the
    server's /api/target is authoritative (see server.py's _handle_get_target):
    APP_CFG is shared across every tab hitting this server, so whichever
    target the *last completed run* actually used is what stage/commit/apply/
    rollback/fleet reads act against — this UI reflects that, it doesn't own it.
+
+   Every run fetches its cost data live from AWS Cost Explorer plus
+   CloudWatch (for the fleet the nano<->micro rightsizing swap needs) — see
+   planner.py's plan_actions(). Nothing is read from local CSV files any
+   more. There is only one target value, "real_aws"; any older value a
+   browser still has saved (local_csv, ec2_rightsizing) falls back to it.
    ========================================================================= */
-const TARGET_LABEL = {local_csv:"local_csv", ec2_rightsizing:"ec2_rightsizing", real_aws:"real_aws"};
-let currentTarget = localStorage.getItem("awsTarget") || "local_csv";
+const TARGET_LABEL = {real_aws:"AWS"};
+let currentTarget = localStorage.getItem("awsTarget") || "real_aws";
+if (!(currentTarget in TARGET_LABEL)) currentTarget = "real_aws";
 
 function applyTargetToUI(){
   const sel = document.getElementById("targetSelect");
-  if(sel){ sel.value = currentTarget; sel.dataset.target = currentTarget; }
+  if(sel){ sel.textContent = TARGET_LABEL[currentTarget] || currentTarget; sel.dataset.target = currentTarget; }
   const lbl = document.getElementById("runTargetLabel");
   if(lbl) lbl.textContent = TARGET_LABEL[currentTarget] || currentTarget;
   const warn = document.getElementById("runRealAwsWarn");
@@ -723,7 +725,7 @@ function updateProvenanceBadge(){
    1c. RUN A NEW ANALYSIS
    ========================================================================= */
 const RUN_STEP_DEFS = [
-  {key:"inputs",         name:"Loading input sources"},
+  {key:"inputs",         name:"Fetching cost data from AWS"},
   {key:"step1",          name:"Simplify & Normalize (LLM)"},
   {key:"step2",          name:"Context Load"},
   // Cost Forecast / Tag Governance / Anomaly Root Cause are deliberately not
@@ -1349,11 +1351,9 @@ function drawInstanceStateTable(){
   const panel = document.getElementById("instancePanel");
   const host = document.getElementById("tblInstanceStates");
   if(!panel || !host) return;
-  // Belongs to the EC2 Rightsizing target: the nano <-> micro swap it
-  // describes is only planned for that target. On any other target (local
-  // files, real AWS) it goes away rather than showing a table nothing acts on.
-  panel.hidden = currentTarget !== "ec2_rightsizing";
-  if(panel.hidden) return;
+  // The nano <-> micro swap this table supports is always planned against
+  // the live fleet (see planner.py's plan_actions()), so it's always shown.
+  panel.hidden = false;
   const list = fleetInScope();
   const sub = document.getElementById("instancePanelSub");
   const chip = document.getElementById("instancePanelTarget");
@@ -1394,12 +1394,8 @@ function drawInstanceStateTable(){
   if(sub) sub.textContent = fleetStateSummaryText(list, fleet.length);
 }
 function drawFleetChart(){
-  // Live-AWS-only, like the EC2-instances table above — not driven by the
-  // CSV, so it has nothing to do with the "Local files" target's data and
-  // would only show the account's real (unrelated) fleet.
   const card = document.getElementById("fleetChartCard");
-  if(card) card.hidden = currentTarget === "local_csv";
-  if(currentTarget === "local_csv") return;
+  if(card) card.hidden = false;
 
   const list = fleetInScope();
   const capEl = document.getElementById("fleetSummaryCaption");
@@ -1500,25 +1496,20 @@ function renderRe(){
     ? `Down from ${money(fc)} if the whole queue is approved`
     : `Current fleet cost, nothing pending`;
 
-  // Live-AWS-only, same reasoning as drawFleetChart() — not driven by the
-  // CSV, so it's hidden for the "Local files" target rather than showing
-  // the account's real (unrelated) fleet.
   const reFleetCard = document.getElementById("reFleetChartCard");
-  if(reFleetCard) reFleetCard.hidden = currentTarget === "local_csv";
-  if(currentTarget !== "local_csv"){
-    const capElRe = document.getElementById("fleetSummaryCaptionRe");
-    if(capElRe) capElRe.textContent = fleetStateSummaryText(fleetInScope(), fleet.length);
-    fleetScatter(document.getElementById("chartReFleet"), fleetInScope(),
-                 {ring:pendingTargets(), height:290}, {utilBand, instCost, monthlyOf});
-    renderLegend(document.getElementById("legendReFleet"),
-      fleetLegendItems(pendingTargets().size ? "Targeted by a pending request" : null));
-    renderTable(document.getElementById("tblReFleet"),
-      [{label:"Instance"},{label:"Type"},{label:"Region"},{label:"Env"},
-       {label:"CPU", num:true},{label:"State"},{label:"USD / month", num:true},{label:"In queue"}],
-      fleetInScope().map(i => [i.name + " (" + i.id + ")", i.type, i.region, i.env,
-        i.cpu + "%", i.state, money2(instCost(i)),
-        pendingTargets().has(i.id) ? "yes" : "no"]));
-  }
+  if(reFleetCard) reFleetCard.hidden = false;
+  const capElRe = document.getElementById("fleetSummaryCaptionRe");
+  if(capElRe) capElRe.textContent = fleetStateSummaryText(fleetInScope(), fleet.length);
+  fleetScatter(document.getElementById("chartReFleet"), fleetInScope(),
+               {ring:pendingTargets(), height:290}, {utilBand, instCost, monthlyOf});
+  renderLegend(document.getElementById("legendReFleet"),
+    fleetLegendItems(pendingTargets().size ? "Targeted by a pending request" : null));
+  renderTable(document.getElementById("tblReFleet"),
+    [{label:"Instance"},{label:"Type"},{label:"Region"},{label:"Env"},
+     {label:"CPU", num:true},{label:"State"},{label:"USD / month", num:true},{label:"In queue"}],
+    fleetInScope().map(i => [i.name + " (" + i.id + ")", i.type, i.region, i.env,
+      i.cpu + "%", i.state, money2(instCost(i)),
+      pendingTargets().has(i.id) ? "yes" : "no"]));
 
   document.getElementById("queueList").innerHTML = q.length
     ? q.map(queueCard).join("")
@@ -1992,16 +1983,6 @@ function renderAll(){
   const badge = document.getElementById("queueBadge");
   badge.textContent = q; badge.hidden = q === 0;
 }
-
-document.getElementById("targetSelect").addEventListener("change", e => {
-  currentTarget = e.target.value;
-  localStorage.setItem("awsTarget", currentTarget);
-  applyTargetToUI();
-  renderAll();
-  syncChatFilters();
-  toast("wait", "Target set to " + (TARGET_LABEL[currentTarget] || currentTarget),
-    "Takes effect on the next \"Start run\".");
-});
 
 document.getElementById("runDateRange").addEventListener("change", syncChatFilters);
 

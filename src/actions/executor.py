@@ -187,6 +187,21 @@ class AWSExecutor:
 
     def _op_for(self, title: str) -> str:
         low = title.lower()
+        # An explicit "from <type> to <type>" mention (two *distinct*
+        # instance types named) is a stronger, unambiguous resize signal
+        # than any keyword — checked first so incidental words elsewhere in
+        # the title never get misread as something else. This matters
+        # because the deterministic nano<->micro swap's own auto-generated
+        # title routinely contains both a "stop"-shaped word from its own
+        # text and two instance types in the same sentence, e.g. "Downgrade
+        # i-... from t3.micro to t3.nano (oversized for an idle/low-traffic
+        # workload) — currently stopped": "idle" and "stopped" both match
+        # the stop-keyword group below, which used to misclassify this as a
+        # stop instead of a resize (see planner.py's
+        # _plan_nano_micro_swap_actions).
+        distinct_types = {t.lower() for t in self._INSTANCE_TYPE_RE.findall(title)}
+        if len(distinct_types) >= 2:
+            return "resize"
         for keywords, op in self._OP_KEYWORDS:
             if any(k in low for k in keywords):
                 return op
@@ -194,7 +209,7 @@ class AWSExecutor:
         # certainly about changing that type, so resize rather than stop —
         # stopping an instance nobody asked to stop is both wrong and the
         # more destructive guess of the two.
-        if self._INSTANCE_TYPE_RE.search(title):
+        if distinct_types:
             return "resize"
         return "stop"  # most universal cost reducer
 

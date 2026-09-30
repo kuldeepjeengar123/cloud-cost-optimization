@@ -85,10 +85,10 @@ described later in this document.
 ### End-to-end system
 
 The three entry points (CLI, web server, MCP server) all call the same
-orchestrator, which reads from one of three interchangeable input sources and
-writes a report to `outputs/`. The web server additionally persists every
-chat answer and pipeline result to Postgres, and uses Redis to speed up
-repeat chat questions.
+orchestrator, which reads from one or both live AWS input sources and writes
+a report to `outputs/`. The web server additionally persists every chat
+answer and pipeline result to Postgres, and uses Redis to speed up repeat
+chat questions.
 
 ```mermaid
 flowchart LR
@@ -98,10 +98,9 @@ flowchart LR
         MCP["mcp_server.py\n(AI agent tools)"]
     end
 
-    subgraph Sources["Input sources (pick one or more)"]
-        CSV["Local CSV files\n(docs/*.csv)"]
-        CE["Cost Explorer API\n(boto3, needs credentials)"]
-        CW["CloudWatch API\n(boto3, needs credentials)"]
+    subgraph Sources["Input sources (pick one or both — needs AWS credentials)"]
+        CE["Cost Explorer API\n(boto3)"]
+        CW["CloudWatch API\n(boto3)"]
     end
 
     REALAWS["Real AWS\n(EC2 / Cost Explorer / CloudWatch / Budgets)"]
@@ -110,7 +109,6 @@ flowchart LR
     WEB --> ORCH
     MCP --> ORCH
 
-    CSV --> ORCH
     CE --> ORCH
     CW --> ORCH
 
@@ -250,13 +248,10 @@ arrk_docs_agent_aws/
 ├── docker-compose.yml          # Postgres + Redis for local development
 ├── pyproject.toml / uv.lock    # Dependencies, managed with uv
 ├── .mcp.json                   # Tells Claude Code/Desktop how to start mcp_server.py
-├── docs/                        # Local CSV inputs — "Local files (CSV)" target
-│   ├── ec2_instance_cost.csv
-│   ├── region_cost.csv
-│   ├── service_daily_cost.csv
-│   ├── tag_cost.csv
-│   └── ec2_rightsizing/          # Separate CSV(s), read only by the "EC2 Rightsizing" target
-│       └── cost_by_service_clean.csv
+├── docs/                        # Row-matching data for the "csv" action_backend
+│   ├── ec2_instance_cost.csv     # (CSVExecutor only — not read as an analysis input;
+│   ├── region_cost.csv           #  all cost data is fetched live from AWS, see src/inputs/)
+│   └── service_daily_cost.csv
 ├── outputs/                      # Generated reports + JSON-file stores (git-ignored)
 ├── tests/                         # unittest suite — no LLM calls, no network calls
 ├── web/                            # Static HTML/CSS/vanilla JS front end (no build step)
@@ -270,8 +265,7 @@ arrk_docs_agent_aws/
     ├── orchestrator_graph.py       # LangGraph rebuild of the same flow (tested, not yet wired in)
     ├── inputs/                      # Input source connectors — same interface, different backend
     │   ├── base.py
-    │   ├── local_csv.py             # ACTIVE by default
-    │   ├── cost_explorer_api.py     # real boto3
+    │   ├── cost_explorer_api.py     # real boto3 — ACTIVE by default
     │   ├── cloudwatch_api.py        # real boto3
     │   └── factory.py
     ├── aws/
@@ -324,11 +318,11 @@ arrk_docs_agent_aws/
   and `server.py` still runs without it — it just won't remember anything
   between restarts.
 - **Git**, to clone the repository.
-- AWS credentials are **not** required to try the "Local files (CSV)" target
-  — the pipeline runs entirely against the CSVs in `docs/`. AWS credentials
-  are required only for the "Real AWS" and "EC2 Rightsizing" targets, and
-  even then, mutating calls stay disabled until `AWS_ALLOW_REAL_WRITES=1` is
-  set (see [Real AWS access](#real-aws-access)).
+- **AWS credentials are always required** — every input source and the
+  dashboard's single AWS target read live from Cost Explorer/CloudWatch, with
+  no local-file alternative. Mutating calls stay disabled until
+  `AWS_ALLOW_REAL_WRITES=1` is set regardless (see
+  [Real AWS access](#real-aws-access)).
 
 ## Installation
 
@@ -410,11 +404,8 @@ python server.py
 
 Open `http://127.0.0.1:8765` in a browser. Three pages are available:
 
-- **`/`** — the RE team's approval dashboard (`web/finops_approval_prototype.html`): shows the queue of raised recommendations, lets a reviewer stage each one as approve/decline, and commits the whole batch at once. Its **Target** dropdown picks the analysis source:
-  - **Local files (CSV)** (the default) — reads `docs/*.csv`, no AWS credentials needed.
-  - **EC2 Rightsizing** — runs its own analysis pipeline over `docs/ec2_rightsizing/*.csv`, *and* separately scans your live AWS fleet for an undersized/oversized `t3.nano`/`t3.micro` instance to recommend resizing — see [the diagram above](#the-ec2-rightsizing-target-two-independent-pieces-merged). Approved changes execute against real AWS.
-  - **Real AWS** — reads live Cost Explorer/CloudWatch data.
-- **`/chat`** — the chat-driven pipeline UI (`web/index.html`): pick a data source (Local CSV or Real AWS), ask a question, and watch the pipeline run live.
+- **`/`** — the RE team's approval dashboard (`web/finops_approval_prototype.html`): shows the queue of raised recommendations, lets a reviewer stage each one as approve/decline, and commits the whole batch at once. There is a single **Target: AWS** — every run fetches its cost data live from AWS Cost Explorer (service, region, EC2 instance type, and project-tag cost — the same four tables that used to be read from local `docs/*.csv` files, now populated by API calls instead; see `src/inputs/cost_explorer_api.py`) *and* CloudWatch (a fleet scan for an undersized/oversized `t3.nano`/`t3.micro` instance to recommend resizing). Nothing is read from disk any more. Cost-Explorer-derived recommendations are informational only (acknowledged, never applied) since the only AWS write this app exposes is changing an instance's type; the nano/micro resize is the only executable, AWS-applied action.
+- **`/chat`** — the chat-driven pipeline UI (`web/index.html`): ask a question and watch the pipeline run live against the same single AWS target.
 - **`/apply`** — a one-click confirmation page opened from a Microsoft Teams notification link.
 
 ### 3. MCP server (AI agent access)
@@ -436,7 +427,7 @@ or pasted into chat, issues, or pull requests.
 | `OPENROUTER_API_KEY` | Yes | — | Primary LLM API key. Every LLM-powered pipeline step needs this. |
 | `OPENROUTER_API_KEY1` | No | — | Optional fallback key, used automatically if the primary key fails. |
 | `AWS_DEFAULT_REGION` | No | boto3 default | AWS region used for real boto3 calls. |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Only for AWS-backed sources/targets | — | Standard AWS credentials. Not needed for the "Local files (CSV)" target. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Yes | — | Standard AWS credentials. Every input source and the dashboard's AWS target need these. |
 | `ACTION_BACKEND` | No | `csv` | `csv` = annotate CSV files with recommendations; `aws` = act on the real AWS API. |
 | `AWS_ALLOW_REAL_WRITES` | No | `0` | Must be `1` for a real-AWS mutating call to actually execute; otherwise every write is a dry run. |
 | `AWS_WRITE_ALLOWED_REGIONS` | No | *(empty = no restriction)* | Comma-separated allowlist of regions where real writes are permitted. |
@@ -450,9 +441,9 @@ or pasted into chat, issues, or pull requests.
 
 ## Real AWS access
 
-Every AWS-backed source and target (`cost_explorer`, `cloudwatch`, the "Real
-AWS" and "EC2 Rightsizing" dashboard targets) uses `boto3` against your real
-account. Set credentials in `.env`:
+Both input sources (`cost_explorer`, `cloudwatch`) and the dashboard's single
+AWS target use `boto3` against your real account — there is no local-file
+alternative, so credentials in `.env` are required to run anything:
 
 ```bash
 # In .env
@@ -462,14 +453,8 @@ AWS_DEFAULT_REGION=eu-west-1
 ```
 
 ```bash
-python main.py --sources local_csv cost_explorer cloudwatch
+python main.py --sources cost_explorer cloudwatch
 ```
-
-The "Local files (CSV)" target needs none of this — it never touches AWS for
-reads. The "EC2 Rightsizing" target's own analysis pipeline also only reads
-its local CSV, but its recommendation (found via a separate, live fleet
-scan) executes against real AWS once the RE team approves and commits it
-(see below), so real credentials are needed for that target too.
 
 ### Real AWS write guardrail
 
@@ -649,13 +634,13 @@ cached, so simply asking again usually works. Check the server's console
 log for the specific `llm.client` warning if it keeps happening.
 
 **Which target should I pick in the dashboard?**
-The web dashboard's header has a **Target** dropdown with three options:
-**Local files (CSV)** (no AWS credentials needed, the default), **EC2
-Rightsizing** (its own CSV-driven analysis, plus a live-AWS-fleet-scanned
-resize recommendation — needs AWS credentials to execute the approved
-change), and **Real AWS** (reads live Cost Explorer/CloudWatch data). `GET
-/api/target` reports which target the *last completed run* actually used —
-authoritative over whatever a browser tab's `localStorage` remembers.
+There is only one: **AWS**. Every run fetches its cost data live from Cost
+Explorer *and* your live AWS account (CloudWatch, plus a fleet scan for a
+nano/micro resize recommendation — needs AWS credentials to execute the
+approved change). Nothing is read from local CSV files any more. `GET
+/api/target` reports the target the *last completed run* used (always
+`real_aws`) — authoritative over whatever a browser tab's `localStorage`
+remembers.
 
 **Why are there two orchestrators (`orchestrator.py` and
 `orchestrator_graph.py`)?**

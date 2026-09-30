@@ -2,13 +2,11 @@
 
 Examples
 --------
-    # default: local CSV in docs/
+    # default: live Cost Explorer + CloudWatch (needs AWS credentials in .env)
     python main.py
 
-    # switch sources via CLI (CSV is the default; the others are stubs that
-    # activate automatically when AWS creds are set in .env)
-    python main.py --sources local_csv
-    python main.py --sources local_csv cost_explorer cloudwatch
+    # restrict to just one source
+    python main.py --sources cost_explorer
 
     # supply a focused question instead of the default broad analysis
     python main.py --query "Which service drove the biggest cost spike?"
@@ -39,9 +37,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sources",
         nargs="+",
-        default=["local_csv"],
-        choices=["local_csv", "cost_explorer", "cloudwatch"],
-        help="Input sources to use. Defaults to local_csv only.",
+        default=["cost_explorer", "cloudwatch"],
+        choices=["cost_explorer", "cloudwatch"],
+        help="Input sources to use (live AWS APIs; requires credentials in .env).",
     )
     parser.add_argument(
         "--query",
@@ -51,7 +49,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--docs-folder",
         default=None,
-        help="Override the docs folder for the local_csv source.",
+        help="Override the docs folder the 'csv' action_backend matches/writes rows against.",
     )
     parser.add_argument(
         "--notify-teams",

@@ -22,24 +22,38 @@ from src.orchestrator import (
 )
 
 
+class FakeLLMClient:
+    """Every call raises — these tests are about the *deterministic* fallback
+    surviving its own exception, so the LLM-first attempt in front of it
+    (see orchestrator.py's _llm_forecast_costs / _llm_check_tag_governance /
+    _llm_explain_anomalies) must fail too before it's ever reached."""
+
+    def complete(self, *a, **k):
+        raise RuntimeError("fake LLM: no network in tests")
+
+    def complete_json(self, *a, **k):
+        raise RuntimeError("fake LLM: no network in tests")
+
+
 class AgentRunnersNeverRaiseTests(unittest.TestCase):
     def setUp(self):
         self.cfg = PipelineConfig()  # defaults: every capabilities.* toggle is True
+        self.llm = FakeLLMClient()
 
     def test_forecast_agent_survives_underlying_exception(self):
         with patch("src.orchestrator.forecast_costs", side_effect=RuntimeError("boom")):
-            result = run_forecast_agent({"service_daily_cost": []}, self.cfg)
+            result = run_forecast_agent({"service_daily_cost": []}, self.llm, self.cfg)
         self.assertEqual(result, {})  # safe default, not a raised exception
 
     def test_tag_governance_agent_survives_underlying_exception(self):
         with patch("src.orchestrator.check_tag_governance", side_effect=RuntimeError("boom")):
-            result = run_tag_governance_agent({"service_daily_cost": []}, self.cfg)
+            result = run_tag_governance_agent({"service_daily_cost": []}, self.llm, self.cfg)
         self.assertEqual(result, [])
 
     def test_root_cause_agent_survives_underlying_exception(self):
         signals = [{"finding": "spike", "table": "service_daily_cost", "date": "2026-01-01"}]
         with patch("src.orchestrator.explain_anomalies", side_effect=RuntimeError("boom")):
-            result = run_root_cause_agent({"service_daily_cost": []}, signals, self.cfg)
+            result = run_root_cause_agent({"service_daily_cost": []}, signals, self.llm, self.cfg)
         # Falls back to the original (un-explained) signals, not an exception.
         self.assertEqual(result, signals)
 
@@ -47,13 +61,13 @@ class AgentRunnersNeverRaiseTests(unittest.TestCase):
         cfg = PipelineConfig()
         cfg.capabilities.forecast_costs = False
         with patch("src.orchestrator.forecast_costs") as mocked:
-            result = run_forecast_agent({"service_daily_cost": []}, cfg)
+            result = run_forecast_agent({"service_daily_cost": []}, self.llm, cfg)
         mocked.assert_not_called()
         self.assertEqual(result, {})
 
     def test_root_cause_agent_skips_work_when_no_signals(self):
         with patch("src.orchestrator.explain_anomalies") as mocked:
-            result = run_root_cause_agent({"service_daily_cost": []}, [], self.cfg)
+            result = run_root_cause_agent({"service_daily_cost": []}, [], self.llm, self.cfg)
         mocked.assert_not_called()
         self.assertEqual(result, [])
 

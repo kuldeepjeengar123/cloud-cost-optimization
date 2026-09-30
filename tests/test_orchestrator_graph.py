@@ -7,8 +7,14 @@ every LLM-calling pipeline step already tolerates a failed call and falls
 back to a documented default (see step1_normalize.py, step3_1_charts.py,
 step3_2_analysis.py, step3_3_summary.py), so this genuinely exercises the
 real graph wiring / state-merging / event contract without any LLM cost.
-Local CSV input (docs/*.csv, already in this repo) is used for real, since
-reading it costs nothing.
+Input sources are always live AWS APIs now (no local-file source exists), so
+``build_sources`` is patched to a FakeInputSource with a small in-memory
+fixture instead — this test needs no AWS credentials or network access.
+``AWSExecutor`` is likewise patched to FakeAWSExecutor: plan_actions() always
+runs its live-fleet nano/micro rightsizing scan regardless of action_backend
+(see planner.py's plan_actions() docstring), so without this, any real AWS
+credentials present in the environment (e.g. a developer's own .env) would
+make these tests silently start hitting the real EC2 API.
 
 Run with: .venv/Scripts/python.exe -m unittest discover -s tests -v
 """
@@ -20,8 +26,39 @@ import unittest
 from unittest.mock import patch
 
 from src.config import PipelineConfig
+from src.inputs.base import InputSource, SourcePayload
 from src.orchestrator import STEP_LABELS
 from src.orchestrator_graph import run_pipeline_graph
+
+
+class FakeInputSource(InputSource):
+    kind = "fake"
+
+    def is_available(self) -> bool:
+        return True
+
+    def fetch(self) -> SourcePayload:
+        return SourcePayload(
+            kind=self.kind,
+            name="fake:test",
+            records={
+                "service_daily_cost": [{"Date": "2026-01-01", "Service": "EC2", "Cost": 12.5}],
+                "region_cost": [{"Date": "2026-01-01", "Region": "us-west-2", "Cost": 8.0}],
+            },
+        )
+
+
+class FakeAWSExecutor:
+    """An empty fleet — planner.py's nano/micro scan already tolerates this
+    exactly like a missing/unreachable AWS credential (see its own
+    try/except), so this is enough to keep every test action-free without
+    mocking botocore itself."""
+
+    def __init__(self, cfg):
+        pass
+
+    def inventory(self):
+        return []
 
 # The steps orchestrator_graph.py actually emits today. It still uses the
 # original, single-call Step 3.2 (run_step3_2_analysis) — orchestrator.py's
@@ -54,7 +91,9 @@ class FakeLLMClient:
 
 
 def _test_cfg() -> PipelineConfig:
-    cfg = PipelineConfig(user_query="test query", sources=["local_csv"])
+    # sources is irrelevant here — build_sources() itself is patched to
+    # FakeInputSource in every test below, so nothing ever reads this list.
+    cfg = PipelineConfig(user_query="test query", sources=[])
     cfg.teams_webhook_url = ""  # never actually post to Teams from a test
     # actions.risk.assess_risk() constructs its OWN LLMClient independent of
     # the FakeLLMClient patched into orchestrator_graph's namespace below —
@@ -67,6 +106,8 @@ def _test_cfg() -> PipelineConfig:
 
 class RunPipelineGraphTests(unittest.TestCase):
     @patch("src.orchestrator_graph.LLMClient", FakeLLMClient)
+    @patch("src.orchestrator_graph.build_sources", lambda cfg: [FakeInputSource()])
+    @patch("src.actions.executor.AWSExecutor", FakeAWSExecutor)
     def test_runs_to_completion_with_expected_result_shape(self):
         cfg = _test_cfg()
         result = run_pipeline_graph(cfg)
@@ -76,6 +117,8 @@ class RunPipelineGraphTests(unittest.TestCase):
             self.assertIn(key, result, f"missing '{key}' in run_pipeline_graph's result")
 
     @patch("src.orchestrator_graph.LLMClient", FakeLLMClient)
+    @patch("src.orchestrator_graph.build_sources", lambda cfg: [FakeInputSource()])
+    @patch("src.actions.executor.AWSExecutor", FakeAWSExecutor)
     def test_emits_start_before_complete_for_every_step_label(self):
         cfg = _test_cfg()
         events: list[tuple[str, dict]] = []
@@ -114,19 +157,21 @@ class ParallelAgentConcurrencyTests(unittest.TestCase):
         this feature's own research (see the migration plan)."""
         cfg = _test_cfg()
 
-        def slow_forecast(records, cfg):
+        def slow_forecast(records, llm, cfg):
             time.sleep(0.3)
             return {}
 
-        def slow_tag_governance(records, cfg):
+        def slow_tag_governance(records, llm, cfg):
             time.sleep(0.3)
             return []
 
-        def slow_root_cause(records, signals, cfg):
+        def slow_root_cause(records, signals, llm, cfg):
             time.sleep(0.3)
             return signals
 
         with patch("src.orchestrator_graph.LLMClient", FakeLLMClient), \
+             patch("src.orchestrator_graph.build_sources", lambda cfg: [FakeInputSource()]), \
+             patch("src.actions.executor.AWSExecutor", FakeAWSExecutor), \
              patch("src.orchestrator_graph.run_forecast_agent", slow_forecast), \
              patch("src.orchestrator_graph.run_tag_governance_agent", slow_tag_governance), \
              patch("src.orchestrator_graph.run_root_cause_agent", slow_root_cause):

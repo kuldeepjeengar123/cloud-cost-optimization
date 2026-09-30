@@ -1,14 +1,15 @@
 """Pipeline configuration.
 
 Centralizes settings for input sources, LLM model selection, and capability
-toggles so the same orchestrator can be driven from CSV today and the live AWS
-Cost Explorer / CloudWatch APIs tomorrow with only a config change.
+toggles. Input data always comes from the live AWS Cost Explorer/CloudWatch
+APIs (see src/inputs/) — there is no local-file input source.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -17,16 +18,37 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-SourceKind = Literal["local_csv", "cost_explorer", "cloudwatch"]
+SourceKind = Literal["cost_explorer", "cloudwatch"]
 DateRange = Literal["today", "yesterday", "weekly", "monthly", "yearly"]
 
 # Rolling-window length (in days) for each preset, counting back from the
-# anchor date. Shared by LocalCSVSource (anchor = latest Date in the CSVs)
-# and CostExplorerSource (anchor = real now), so "monthly" means the same
-# 30-day window regardless of which source produced it.
+# anchor date (real UTC "today" — see date_range_bounds, used by
+# CostExplorerSource).
 DATE_RANGE_DAYS: dict[str, int] = {
     "today": 1, "yesterday": 1, "weekly": 7, "monthly": 30, "yearly": 365,
 }
+
+
+def date_range_bounds(date_range: Optional[str], anchor: date) -> Optional[tuple[date, date]]:
+    """Inclusive ``(start, end)`` bounds for a ``DATE_RANGE_DAYS`` preset,
+    anchored on ``anchor`` (the real UTC "today"). Returns ``None`` for no
+    filter or an unrecognized range, meaning "use everything available".
+
+    "yesterday" is a special case handled outside the day-count table: every
+    other preset is an N-day trailing window *ending* at the anchor (so
+    "today" is just the anchor day alone, `DATE_RANGE_DAYS["today"] == 1`),
+    but "yesterday" must be the single day *before* the anchor instead — it
+    would otherwise be indistinguishable from "today" (both map to a 1-day
+    window that, ending at the anchor, is just the anchor day).
+    """
+    if not date_range:
+        return None
+    if date_range == "yesterday":
+        d = anchor - timedelta(days=1)
+        return d, d
+    if date_range in DATE_RANGE_DAYS:
+        return anchor - timedelta(days=DATE_RANGE_DAYS[date_range] - 1), anchor
+    return None
 
 
 @dataclass
@@ -69,7 +91,10 @@ class CapabilitiesConfig:
 @dataclass
 class PipelineConfig:
     project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent)
-    sources: list[SourceKind] = field(default_factory=lambda: ["local_csv"])
+    sources: list[SourceKind] = field(default_factory=lambda: ["cost_explorer", "cloudwatch"])
+    # Row-matching folder for the "csv" action_backend (CSVExecutor) only —
+    # not an input/analysis source any more (that's always live AWS now; see
+    # inputs/cost_explorer_api.py).
     docs_folder: Path = field(default=Path("docs"))
     output_folder: Path = field(default=Path("outputs"))
     # Where applied (human-approved) changes are written. The CSV backend writes
@@ -78,6 +103,10 @@ class PipelineConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     capabilities: CapabilitiesConfig = field(default_factory=CapabilitiesConfig)
     aws_region: str = field(default_factory=lambda: os.getenv("AWS_DEFAULT_REGION", "us-west-2"))
+    # Cost allocation tag CostExplorerSource groups by for the "tag_cost" table
+    # (must already be activated as a cost allocation tag in the account, or
+    # that one table just comes back empty — see cost_explorer_api.py).
+    cost_tag_key: str = field(default_factory=lambda: os.getenv("COST_ALLOCATION_TAG_KEY", "Project"))
     user_query: str = "Provide a comprehensive AWS cost analysis with key insights and recommendations."
     # Scopes input data to a rolling window before it reaches the pipeline.
     # None (or any value outside DATE_RANGE_DAYS) means "all available data".

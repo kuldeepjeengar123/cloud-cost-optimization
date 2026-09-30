@@ -2,14 +2,18 @@
 
 Strategy (deterministic, no extra LLM call):
 
-1. Build an *entity catalog* from the normalized CSV records — every dimension
+1. Build an *entity catalog* from the normalized cost records (fetched live
+   from AWS Cost Explorer/CloudWatch — see src/inputs/) — every dimension
    value present in the data (regions, services, instance types, project tags),
    ranked by the cost attached to it.
 2. For each recommendation, find the highest-cost catalog entity whose value is
    mentioned in the recommendation text. That entity's ``(table, column, value)``
-   becomes the Action's target row.
-3. Recommendations that mention no known entity become ``manual`` actions —
-   surfaced for visibility but only acknowledged, never auto-applied.
+   is attached as evidence (``citations``), but the recommendation itself is
+   always surfaced as a ``manual`` action — informational only, acknowledged
+   but never sent to AWS. The single exposed AWS write tool only supports
+   changing an instance's type, so a cost-data-derived recommendation (stop,
+   tag, terminate, budget, ...) has nothing safe to execute against; only the
+   deterministic nano<->micro rightsizing swap below is ever AWS-executable.
 """
 
 from __future__ import annotations
@@ -59,46 +63,23 @@ def _build_catalog(records: dict[str, list[dict]]) -> list[dict]:
 
 
 def _match_all_entities(text: str, catalog: list[dict]) -> list[dict]:
-    """Every catalog entity mentioned in the recommendation text, cost-sorted.
-    The first entry is the one the action targets; the full list becomes the
-    action's ``citations`` — the evidence trail for why it was recommended."""
+    """Every catalog entity mentioned in the recommendation text, cost-sorted —
+    becomes the action's ``citations``, the evidence trail for why it was
+    recommended (cost-catalog recommendations are informational-only; see
+    ``plan_actions`` below, so no entity is picked out as an apply target)."""
     low = text.lower()
     return [entity for entity in catalog if entity["value"].lower() in low]
 
 
-def _select_target(text: str, matches: list[dict]) -> dict | None:
-    """Pick which matched entity a recommendation's row-level change targets.
-
-    ``matches`` is cost-sorted, so the top entry is normally "the" dimension
-    a recommendation is about. But a recommendation that lists several
-    candidates of the *same* dimension — e.g. "Replace t3.nano instances with
-    t3.micro (or t3.small) or consider t3.medium or m5.large" — would
-    otherwise grab whichever alternative happens to be the most heavily used
-    elsewhere in the whole account, instead of the instance the
-    recommendation is actually about. Within that top-ranked (table, column)
-    group, prefer whichever value the text mentions first instead; groups of
-    one (the overwhelming majority of recommendations) are unaffected.
-    """
-    if not matches:
-        return None
-    top_table, top_column = matches[0]["table"], matches[0]["column"]
-    same_group = [m for m in matches if m["table"] == top_table and m["column"] == top_column]
-    if len(same_group) == 1:
-        return matches[0]
-    low = text.lower()
-    same_group.sort(key=lambda m: low.find(m["value"].lower()))
-    return same_group[0]
-
-
-def _match_entity(text: str, catalog: list[dict]) -> dict | None:
-    return _select_target(text, _match_all_entities(text, catalog))
-
-
 # Deterministic EC2 rightsizing swap: nano is treated as undersized (recommend
 # upsizing to micro) and micro as oversized for idle/low-traffic use (recommend
-# downsizing to nano). This is independent of whatever the LLM's CSV-driven
+# downsizing to nano). This is independent of whatever the LLM's cost-driven
 # recommendations say — it reads the live fleet directly so it always reflects
-# the account's actual instance types, one action per real instance.
+# the account's actual instance types, one action per real instance. Always
+# attempted alongside the cost-catalog-matched recommendations in
+# plan_actions() below (previously this ran only for a separate "EC2
+# Rightsizing" target) — a missing/unreachable AWS credential just means it
+# contributes zero actions, same as before.
 _NANO_MICRO_SWAP = {"nano": "micro", "micro": "nano"}
 
 
@@ -147,10 +128,10 @@ def _plan_nano_micro_swap_actions(run_id: str, cfg: "PipelineConfig", executor) 
 
 
 def _finalize_action(action: Action, cfg: "PipelineConfig | None", executor, seen: set[str]) -> Action | None:
-    """Dedupe against ``seen``, then fill in the preview + risk assessment.
-    Returns ``None`` for a duplicate (shared by plan_actions() and
-    plan_ec2_rightsizing_actions() so both apply the exact same preview/risk
-    treatment to every action, CSV-matched or fleet-scanned alike)."""
+    """Dedupe against ``seen``, then fill in the preview + risk assessment —
+    applied uniformly to every action plan_actions() produces below, whether
+    it's a cost-catalog match or a live-fleet-scanned nano/micro swap.
+    Returns ``None`` for a duplicate."""
     if action.id in seen:
         return None
     seen.add(action.id)
@@ -161,30 +142,6 @@ def _finalize_action(action: Action, cfg: "PipelineConfig | None", executor, see
 
             assess_risk(action, cfg, executor)
     return action
-
-
-def plan_ec2_rightsizing_actions(run_id: str, cfg: "PipelineConfig") -> list[Action]:
-    """Action plan for the "EC2 Rightsizing" target: reads the live AWS fleet
-    directly and applies only the deterministic nano<->micro swap (see
-    _plan_nano_micro_swap_actions) — no local CSV data is read, and no LLM
-    recommendation is matched against an entity catalog. Unlike plan_actions(),
-    this never falls back to CSV-derived recommendations for this target.
-    """
-    from .executor import AWSExecutor
-
-    executor = AWSExecutor(cfg)
-    actions: list[Action] = []
-    seen: set[str] = set()
-    for action in _plan_nano_micro_swap_actions(run_id, cfg, executor):
-        finalized = _finalize_action(action, cfg, executor, seen)
-        if finalized is not None:
-            actions.append(finalized)
-
-    log.info(
-        "Planned %s EC2 rightsizing action(s) from the live AWS fleet (no CSV)",
-        len(actions),
-    )
-    return actions
 
 
 def _attach_preview(action: Action, cfg: "PipelineConfig", executor=None) -> None:
@@ -219,12 +176,28 @@ def plan_actions(
     backend: str = "csv",
     cfg: "PipelineConfig | None" = None,
 ) -> list[Action]:
-    """Build Action descriptors from the combined report's recommendations.
+    """Build Action descriptors from the combined report's recommendations,
+    plus — always — the deterministic live-fleet nano/micro rightsizing swap
+    (see ``_plan_nano_micro_swap_actions``).
+
+    Every cost-catalog-matched recommendation is surfaced as a non-executable
+    ``manual`` action: the only AWS write path this app exposes is resizing
+    an instance's type, so a recommendation about stopping, tagging,
+    terminating, or budgets has nothing it can safely execute — it is shown
+    for visibility and acknowledged, never applied. ``backend`` is kept for
+    callers/tests that still pass it, but no longer changes executability.
+    The nano/micro rightsizing swap actions are the sole exception: they are
+    always ``backend="aws"`` and remain the only executable actions this
+    planner produces.
 
     ``cfg`` is optional and only used to compute a read-only plan preview
     (matched instances, the calls that will run, an estimated saving) for
-    "aws" backend actions — pass it whenever it's available so the two-stage
-    approval dashboard has real numbers to show the RE team.
+    "aws" backend actions, and to run the fleet scan itself — pass it
+    whenever it's available so the two-stage approval dashboard has real
+    numbers to show the RE team. Without AWS credentials configured, the
+    fleet scan below simply contributes zero actions (see
+    ``_plan_nano_micro_swap_actions``'s own try/except) rather than failing
+    the whole run.
     """
     catalog = _build_catalog(records)
     summary = combined.get("summary", {}) or {}
@@ -232,9 +205,12 @@ def plan_actions(
 
     # One executor for the whole planning pass, so the fleet is read once and
     # every preview/risk check below shares that snapshot — see
-    # AWSExecutor.inventory().
+    # AWSExecutor.inventory(). Built whenever cfg is available, regardless of
+    # this run's own cost-catalog ``backend``: it's reused below for the
+    # always-on nano/micro fleet scan, and (only when an action's own
+    # ``backend == "aws"``) for that action's preview/risk check.
     executor = None
-    if cfg is not None and backend == "aws":
+    if cfg is not None:
         from .executor import AWSExecutor
 
         executor = AWSExecutor(cfg)
@@ -257,23 +233,7 @@ def plan_actions(
             continue
 
         matches = _match_all_entities(title, catalog)
-        entity = _select_target(title, matches)
-        if entity:
-            action = Action.for_row(
-                run_id=run_id,
-                title=title,
-                table=entity["table"],
-                match_column=entity["column"],
-                match_value=entity["value"],
-                set_fields={
-                    "action_status": "applied",
-                    "applied_recommendation": title,
-                },
-                impact=impact,
-                backend=backend,
-            )
-        else:
-            action = Action.manual(run_id=run_id, title=title, impact=impact)
+        action = Action.manual(run_id=run_id, title=title, impact=impact)
         action.citations = matches[:20]
 
         _collect(action)

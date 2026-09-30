@@ -24,7 +24,7 @@ from .approval import (
 from .decision_log import DecisionLogStore
 from .executor import ApplyResult, get_executor
 from .models import Action
-from .planner import plan_actions, plan_ec2_rightsizing_actions
+from .planner import plan_actions
 from .review import ALL, APPLY, QUIT, SKIP, review_and_apply
 from .rollback import load_batch_snapshot, rollback_batch
 from .store import ActionStore
@@ -35,7 +35,6 @@ __all__ = [
     "ApplyResult",
     "get_executor",
     "plan_actions",
-    "plan_ec2_rightsizing_actions",
     "review_and_apply",
     "APPLY",
     "SKIP",

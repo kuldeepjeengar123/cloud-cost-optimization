@@ -15,8 +15,12 @@ _TAG_COLUMNS = ("project_tag",)  # extend here if a source adds owner/env column
 _HIGH_SEVERITY_SHARE = 0.2  # untagged spend above this share of the table's total
 
 
-def check_tag_governance(records: dict[str, list[dict]]) -> list[dict]:
-    findings: list[dict] = []
+def tag_exposure_snapshot(records: dict[str, list[dict]]) -> dict:
+    """Per table with a tag column present: rows missing it, the $ exposed,
+    and the table's total spend — public data prep, shared by the
+    deterministic check below and orchestrator.py's LLM-first tag-governance
+    agent (which judges severity itself instead of ``_HIGH_SEVERITY_SHARE``)."""
+    snapshot: dict[str, dict] = {}
     for table, rows in (records or {}).items():
         if not rows:
             continue
@@ -39,6 +43,22 @@ def check_tag_governance(records: dict[str, list[dict]]) -> list[dict]:
 
         if count == 0:
             continue
+        snapshot[table] = {
+            "tag_column": tag_col,
+            "rows_affected": count,
+            "cost_exposed": round(exposed_cost, 6),
+            "table_total_cost": round(table_total, 6),
+        }
+    return snapshot
+
+
+def check_tag_governance(records: dict[str, list[dict]]) -> list[dict]:
+    findings: list[dict] = []
+    for table, stats in tag_exposure_snapshot(records).items():
+        table_total = stats["table_total_cost"]
+        exposed_cost = stats["cost_exposed"]
+        count = stats["rows_affected"]
+        tag_col = stats["tag_column"]
         share = exposed_cost / table_total if table_total > 0 else 0.0
         findings.append({
             "finding": f"{count} row(s) in {table} missing {tag_col}",

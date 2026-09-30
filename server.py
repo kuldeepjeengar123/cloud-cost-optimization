@@ -44,7 +44,6 @@ from src.actions import (
     commit_batch,
     commit_status,
     get_executor,
-    plan_ec2_rightsizing_actions,
     raise_for_review,
     reopen,
     rollback_batch,
@@ -86,27 +85,29 @@ CHAT_HISTORY = ChatHistoryStore(PG_STORE)
 # while a run is in flight, instead of answering against stale insights.
 PIPELINE_RUNNING = threading.Event()
 
-# `target` is the dashboard's single source-selector dropdown (Local files /
-# EC2 Rightsizing / Real AWS) — mapping it to sources+backend lives here, in
-# one place, instead of the client having to know what each target implies.
-# Older callers (web/app.js) that still send sources/backend directly keep
-# working unchanged (see _handle_run's fallback).
+# This app has a single target: AWS. Every run fetches its cost/usage data
+# live from AWS Cost Explorer (the same four tables — service, region,
+# EC2 instance type, and project tag cost — that used to be read from local
+# CSV files under docs/, now populated by CostExplorerSource instead; see
+# src/inputs/cost_explorer_api.py) *and* CloudWatch (for the fleet the
+# nano<->micro rightsizing scan needs) — nothing is read from disk any more.
+# Kept as a map (rather than inlining the tuple below) so _handle_run has one
+# lookup to fall back to for any client that still posts an old
+# target/sources/backend value.
 #
-# "ec2_rightsizing" reads no input source at all: it skips run_pipeline (no
-# CSV, no LLM call) entirely and goes straight to a live AWS fleet scan +
-# the deterministic nano<->micro swap — see _run_ec2_rightsizing_only() and
-# actions.planner.plan_ec2_rightsizing_actions(). `sources` is kept empty
-# here (never passed to build_sources) purely so cfg.sources reflects that.
+# actions.planner.plan_actions() always plans two kinds of recommendation in
+# the same run: Cost-Explorer-catalog-matched ones, surfaced as informational
+# "manual" actions (the only AWS write tool this app exposes is resizing an
+# instance's type, so nothing else is safe to auto-apply), and —
+# unconditionally, whenever AWS credentials are present — the deterministic
+# live-fleet nano<->micro rightsizing swap, which remains the only
+# executable action kind.
 TARGET_MAP = {
-    "local_csv": {"sources": ["local_csv"], "backend": "csv"},
-    "ec2_rightsizing": {"sources": [], "backend": "aws"},
     "real_aws": {"sources": ["cost_explorer", "cloudwatch"], "backend": "aws"},
 }
-# The target the *last completed run* actually used — see _handle_get_target.
-# Tracked separately from APP_CFG.action_backend because backend "aws" alone
-# is ambiguous between "ec2_rightsizing" and "real_aws" (they differ only in
-# `sources`).
-LAST_TARGET = "local_csv"
+# The one supported target. Kept as a variable (rather than a literal) since
+# _handle_get_target reports it back to the dashboard.
+LAST_TARGET = "real_aws"
 
 # One AWS client for the whole process. Its boto3 clients are built lazily
 # and then cached on the instance, and that cold start — credential-chain
@@ -145,113 +146,6 @@ def _invalidate_fleet_cache() -> None:
     with _fleet_cache_lock:
         _fleet_cache["ts"] = 0.0
         _fleet_cache["payload"] = None
-
-
-def _write_ec2_rightsizing_insights(cfg, run_id: str, action_dicts: list[dict]) -> None:
-    """Fallback used only when the EC2-rightsizing target's own cost-analysis
-    pipeline (see ``_run_ec2_rightsizing_only``) fails or finds no CSV data —
-    writes a minimal ``insights_<UTC timestamp>.json``, same naming convention
-    as ``step5_finalize.py``, so the chat widget's ``latest_insights_path()``
-    (src/chat/answer.py) still has *something* current to ground on instead
-    of silently falling back to a stale, unrelated run's insights file. The
-    payload only claims what's actually known in this fallback case: the
-    fleet scan and its rightsizing recommendation(s), no cost breakdown.
-    """
-    payload = {
-        "business_metadata": {
-            "run_type": "ec2_rightsizing",
-            "run_id": run_id,
-            "source": (
-                "Live AWS EC2 fleet scan (describe_instances + CloudWatch "
-                "CPUUtilization) — this run did not read any cost/usage CSV "
-                "or Cost Explorer data, so no cost breakdown or anomalies "
-                "are available from it."
-            ),
-        },
-        "analysis": {"ec2_rightsizing_actions": action_dicts},
-        "summary": {
-            "key_findings": [a["title"] for a in action_dicts] or ["No rightsizing opportunities found in the current fleet."],
-            "recommendations": [a["title"] for a in action_dicts],
-        },
-        "correlations": {},
-    }
-    timestamp = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
-    path = cfg.output_folder / f"insights_{timestamp}.json"
-    try:
-        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-    except OSError as exc:
-        log.warning("Could not write %s (%s); chat will fall back to an older insights file.", path, exc)
-
-
-def _run_ec2_rightsizing_only(cfg, on_event) -> None:
-    """The "EC2 Rightsizing" target's whole run: two independent pieces,
-    merged into one report.
-
-    1. A normal analysis pipeline run (every agent: normalize, context load,
-       charts, analysis, summary, finalize) over ``docs/ec2_rightsizing/`` —
-       a CSV folder dedicated to this target, kept separate from the one
-       "Local files"/"Real AWS" read, so its charts/insights are grounded in
-       its own data. ``skip_action_planning=True`` so this never plans or
-       writes a recommendation of its own.
-    2. The live AWS fleet scan and deterministic nano<->micro swap (see
-       actions.planner.plan_ec2_rightsizing_actions()) — unchanged, and still
-       the *only* source of this target's recommendations.
-
-    Emits the same event shape /api/run's SSE loop and the dashboard's
-    startPipelineRun() already expect (run_start, step_start/step_complete
-    pairs, actions, final) so nothing on the frontend needs a special case
-    for this target beyond what it already renders for a normal run.
-    """
-    on_event("run_start", {"query": cfg.user_query, "sources": ["local_csv"]})
-
-    def _relay(kind: str, payload: dict) -> None:
-        # This function owns the single run_start/final pair for the whole
-        # target — the nested pipeline run below emits its own, which would
-        # otherwise duplicate/confuse the frontend's one-run-per-click model.
-        if kind in ("run_start", "final"):
-            return
-        on_event(kind, payload)
-
-    csv_cfg = load_config(
-        user_query=cfg.user_query, sources=["local_csv"],
-        docs_folder=cfg.project_root / "docs" / "ec2_rightsizing",
-        action_backend=cfg.action_backend, date_range=cfg.date_range,
-    )
-    pipeline_result = None
-    try:
-        pipeline_result = run_pipeline(csv_cfg, on_event=_relay, skip_action_planning=True)
-    except Exception as exc:
-        log.warning(
-            "EC2 Rightsizing cost-analysis pipeline failed (%s); "
-            "continuing with the fleet scan and recommendation only.", exc,
-        )
-
-    step, label = "step5", "Real AWS EC2 fleet scan"
-    start = time.time()
-    on_event("step_start", {"step": step, "label": label})
-
-    run_id = f"ec2_rightsizing_{time.strftime('%Y%m%d_%H%M%S')}"
-    actions = plan_ec2_rightsizing_actions(run_id, cfg)
-
-    on_event("step_complete", {
-        "step": step, "label": "Fleet scan complete",
-        "elapsed_s": round(time.time() - start, 2),
-    })
-
-    store = ActionStore(cfg.output_folder / "pending_actions.json")
-    store.upsert_many(actions)
-
-    action_dicts = [a.to_dict() for a in actions]
-    result = dict(pipeline_result) if pipeline_result else {"run_id": run_id}
-    result.update({
-        "actions": action_dicts,
-        "action_backend": cfg.action_backend,
-        "applied_folder": str(cfg.applied_folder),
-    })
-    if pipeline_result is None:
-        _write_ec2_rightsizing_insights(cfg, run_id, action_dicts)
-    on_event("actions", {"actions": action_dicts})
-    on_event("final", {"result": result})
 
 
 CONTENT_TYPES = {
@@ -341,25 +235,15 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             body = {}
 
-        target = (body.get("target") or "").strip().lower()
-        if target in TARGET_MAP:
-            mapped = TARGET_MAP[target]
-            sources, backend = mapped["sources"], mapped["backend"]
-        else:
-            sources = body.get("sources") or ["local_csv"]
-            # Backend: explicit from the client, else infer ("aws" when reading
-            # from the cost_explorer/cloudwatch sources).
-            backend = body.get("backend")
-            if not backend:
-                backend = "aws" if any(s in ("cost_explorer", "cloudwatch") for s in sources) else "csv"
-            # Best-effort target label for callers that skip TARGET_MAP (older
-            # web/app.js-style calls) so _handle_get_target still reports something.
-            if backend != "aws":
-                target = "local_csv"
-            elif sources == ["local_csv"]:
-                target = "ec2_rightsizing"
-            else:
-                target = "real_aws"
+        # Only one target exists ("real_aws"): whatever a client sends —
+        # old target names, or raw sources/backend from web/app.js's older
+        # direct-POST style — always resolves to the same single mapping, so
+        # every run fetches its cost data live from AWS (Cost Explorer +
+        # CloudWatch, no local CSV files), and every executable action goes
+        # through the AWS backend.
+        target = "real_aws"
+        mapped = TARGET_MAP[target]
+        sources, backend = mapped["sources"], mapped["backend"]
 
         query = body.get("query") or (
             "Provide a comprehensive AWS cost analysis with key insights and recommendations."
@@ -409,7 +293,7 @@ class Handler(BaseHTTPRequestHandler):
             q.put((kind, payload))
             if kind == "step_complete":
                 # One durable JSON row per finished agent/step — `source` is
-                # the step's own human-readable name ("Sources loaded",
+                # the step's own human-readable name ("Cost data fetched",
                 # "Normalized", "Context loaded", "Charts drafted", "Analysis
                 # ready", "Summary written", ...; see orchestrator.py's
                 # STEP_LABELS) so it's immediately visible in the table
@@ -446,10 +330,7 @@ class Handler(BaseHTTPRequestHandler):
         def runner():
             PIPELINE_RUNNING.set()
             try:
-                if target == "ec2_rightsizing":
-                    _run_ec2_rightsizing_only(cfg, on_event)
-                else:
-                    run_pipeline(cfg, on_event=on_event)
+                run_pipeline(cfg, on_event=on_event)
             except Exception as exc:
                 log.exception("Pipeline failed")
                 q.put(("error", {"message": str(exc)}))
@@ -740,6 +621,7 @@ class Handler(BaseHTTPRequestHandler):
         if not action:
             return self._send_json(HTTPStatus.NOT_FOUND, {"error": "Unknown action id"})
         raised_by = (body.get("raised_by") or "").strip() or "Unknown requester"
+
         try:
             action = raise_for_review(ACTION_STORE, DECISION_LOG, action, raised_by)
         except ApprovalError as exc:
@@ -810,6 +692,7 @@ class Handler(BaseHTTPRequestHandler):
         staged_by = (body.get("staged_by") or body.get("decided_by") or "").strip() or "Unknown approver"
         reason = body.get("reason")
         override = bool(body.get("override"))
+
         try:
             action = stage_decision(ACTION_STORE, DECISION_LOG, action, decision, staged_by, reason, override)
         except ApprovalError as exc:
@@ -845,6 +728,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self._read_body()
         decided_by = (body.get("decided_by") or "").strip() or "Unknown approver"
+
         try:
             summary = commit_batch(APP_CFG, ACTION_STORE, DECISION_LOG, decided_by)
         except ApprovalError as exc:
@@ -864,6 +748,7 @@ class Handler(BaseHTTPRequestHandler):
         actor = (body.get("actor") or "Unknown approver")
         if not batch_id:
             return self._send_json(HTTPStatus.BAD_REQUEST, {"error": "batch_id is required"})
+
         try:
             summary = rollback_batch(APP_CFG, ACTION_STORE, DECISION_LOG, batch_id, actor)
         except ValueError as exc:

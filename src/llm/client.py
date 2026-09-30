@@ -25,6 +25,12 @@ class LLMError(RuntimeError):
     pass
 
 
+class LLMQuotaExceededError(LLMError):
+    """Every configured key was rejected with a quota/auth status (401/402/403/429)
+    — as opposed to a transport error or a malformed response — so callers can
+    show a short, specific message instead of dumping each key's raw failure text."""
+
+
 class LLMClient:
     # Non-200 statuses worth retrying on a different key — auth/quota
     # problems specific to *that* key. Anything else (bad request, 5xx from
@@ -80,6 +86,14 @@ class LLMClient:
                 if stream:
                     return self._stream(payload)
                 return self._non_stream(payload)
+            except LLMQuotaExceededError:
+                # Every configured key is already confirmed out of quota —
+                # retrying (and sleeping between attempts) can't change that,
+                # so re-raise immediately instead of burning through the same
+                # rate limit 3 times. Re-raised as-is (not wrapped in a plain
+                # LLMError like the generic path below) so callers can still
+                # tell this apart and show a short, specific message.
+                raise
             except Exception as exc:
                 last_err = exc
                 log.warning("LLM attempt %s failed: %s", attempt + 1, exc)
@@ -144,12 +158,19 @@ class LLMClient:
         # fallback key (401) reads as an authentication problem, sending you
         # after the wrong cause entirely.
         failures: list[str] = []
+        # True only if every failure below was a key-rejection status
+        # (401/402/403/429) — a transport error or an upstream 5xx/200-with-
+        # error-body means something other than "every key is out of quota",
+        # so callers (the chat widget) can tell those apart and show a short
+        # "quota exhausted" message only when it's actually that.
+        all_quota_like = True
         for i, key in enumerate(self._keys):
             headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
             try:
                 resp = requests.post(self.cfg.base_url, headers=headers, json=payload, stream=stream, timeout=120)
             except requests.RequestException as exc:
                 failures.append(f"key #{i + 1}: {exc}")
+                all_quota_like = False
                 log.warning("OpenRouter request failed (%s); trying the next configured key if any.", exc)
                 continue
             if resp.status_code == 200:
@@ -169,6 +190,7 @@ class LLMClient:
                         err = body["error"]
                         msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
                         failures.append(f"key #{i + 1}: upstream error (HTTP 200 body): {msg}")
+                        all_quota_like = False
                         log.warning(
                             "OpenRouter returned HTTP 200 with an error body (%s); "
                             "trying the next configured key if any.", msg,
@@ -178,11 +200,17 @@ class LLMClient:
                         break
                 return resp
             failures.append(f"key #{i + 1}: HTTP {resp.status_code}: {resp.text[:200]}")
-            if resp.status_code in self._KEY_FALLBACK_STATUSES and i + 1 < len(self._keys):
-                log.warning("OpenRouter key rejected (HTTP %s); trying the next configured key.", resp.status_code)
-                continue
+            if resp.status_code in self._KEY_FALLBACK_STATUSES:
+                if i + 1 < len(self._keys):
+                    log.warning("OpenRouter key rejected (HTTP %s); trying the next configured key.", resp.status_code)
+                    continue
+            else:
+                all_quota_like = False
             break
-        raise LLMError("; ".join(failures) or "no configured API key produced a response")
+        detail = "; ".join(failures) or "no configured API key produced a response"
+        if failures and all_quota_like:
+            raise LLMQuotaExceededError(detail)
+        raise LLMError(detail)
 
     def _non_stream(self, payload: dict) -> str:
         resp = self._request(payload, stream=False)

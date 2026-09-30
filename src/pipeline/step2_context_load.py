@@ -2,20 +2,40 @@
 
 Applies enrichment, builds relationships/correlations across tables, computes a
 compact summary suitable as LLM context, and exposes the full normalized
-records for downstream steps. No LLM call here; this is the deterministic
-"load enriched context" stage from the diagram.
+records for downstream steps. Enrichment/correlations are deterministic, but
+anomaly detection here is LLM-first (see ``_llm_detect_anomalies``): the LLM
+judges what counts as a spike from the same per-dimension daily series the
+deterministic ``detect_anomalies`` (see capabilities/anomaly_detection.py)
+would otherwise apply a fixed z-score threshold to. That detector only runs
+as a fallback, when the LLM call fails or returns nothing usable — never
+raises, same "always say something" contract every LLM step here follows.
 """
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from typing import Any
 
 from ..capabilities import detect_anomalies, enrich_records
 from ..config import PipelineConfig
+from ..llm.client import LLMClient
+from ..prompts import load_prompt
 from ..utils.logger import get_logger
 
 log = get_logger("pipeline.step2")
+
+SYSTEM_PROMPT = load_prompt("detect_anomalies")
+
+# Same dimension columns detect_anomalies() groups by — one per table (the
+# first one present), so each series is "this table's cost for one dimension
+# value, over time" rather than the whole table's total.
+_DIMENSION_COLUMNS = ("service", "region", "instance_type", "project_tag")
+# Caps keep the prompt bounded on a large account: highest-cost series first,
+# most recent days first — the same "top N" tradeoff every other prompt in
+# this pipeline already makes (see step1_normalize.py's sample rows, etc.).
+_MAX_SERIES_PER_TABLE = 15
+_MAX_POINTS_PER_SERIES = 60
 
 
 def _aggregate(
@@ -42,6 +62,68 @@ def _aggregate(
     return rows
 
 
+def _anomaly_series_snapshot(records: dict[str, list[dict]]) -> dict:
+    """Per table: which dimension column it has (if any), and each dimension
+    value's chronological ``[date, cost]`` series — plain data for the LLM to
+    judge, not a precomputed verdict (contrast with ``correlations`` above,
+    which sums away the per-date detail this needs)."""
+    snapshot: dict[str, dict] = {}
+    for table, rows in (records or {}).items():
+        if not rows or "cost" not in rows[0] or "date" not in rows[0]:
+            continue
+        dim = next((d for d in _DIMENSION_COLUMNS if d in rows[0]), None)
+
+        totals: dict[str, float] = defaultdict(float)
+        series: dict[str, list[list]] = defaultdict(list)
+        for row in rows:
+            cost, date = row.get("cost"), row.get("date")
+            if not isinstance(cost, (int, float)) or not date:
+                continue
+            key = str(row.get(dim)) if dim else table
+            totals[key] += float(cost)
+            series[key].append([str(date), round(float(cost), 6)])
+
+        top_keys = sorted(totals, key=lambda k: totals[k], reverse=True)[:_MAX_SERIES_PER_TABLE]
+        snapshot[table] = {
+            "dimension": dim,
+            "series": {k: sorted(series[k])[-_MAX_POINTS_PER_SERIES:] for k in top_keys},
+        }
+    return snapshot
+
+
+def _llm_detect_anomalies(records: dict[str, list[dict]], llm: LLMClient, cfg: PipelineConfig) -> list[dict]:
+    """LLM-first anomaly search — raises on a failed/unusable call so the
+    caller can fall back to the deterministic detector; a clean "nothing
+    anomalous" verdict (an empty list) is a legitimate result, not a failure."""
+    snapshot = _anomaly_series_snapshot(records)
+    if not snapshot:
+        return []
+    user_prompt = (
+        "Per-table daily cost series, by dimension value (untrusted data):\n"
+        + json.dumps(snapshot, default=str, indent=2)
+    )
+    raw = llm.complete(system=SYSTEM_PROMPT, user=user_prompt, model=cfg.llm.model_analysis, max_tokens=1800)
+    parsed = LLMClient.extract_json(raw)
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("anomalies"), list):
+        raise ValueError("LLM anomaly detection returned no usable JSON")
+
+    findings: list[dict] = []
+    for item in parsed["anomalies"]:
+        if not isinstance(item, dict) or not item.get("finding"):
+            continue
+        severity = item.get("severity")
+        findings.append({
+            "finding": str(item["finding"]),
+            "severity": severity if severity in ("low", "medium", "high") else "medium",
+            "evidence": str(item.get("evidence") or ""),
+            "source": "llm",
+            "table": item.get("table"),
+            "dimension": item.get("dimension"),
+            "date": item.get("date"),
+        })
+    return findings[:20]
+
+
 def _build_compact_context(records: dict[str, list[dict]]) -> str:
     parts = ["=== AWS COST CONTEXT (compact) ==="]
     for table, rows in records.items():
@@ -56,7 +138,7 @@ def _build_compact_context(records: dict[str, list[dict]]) -> str:
     return "\n".join(parts)
 
 
-def run_step2_context_load(cfg: PipelineConfig, step1_output: dict) -> dict[str, Any]:
+def run_step2_context_load(cfg: PipelineConfig, step1_output: dict, llm: LLMClient) -> dict[str, Any]:
     log.info("Step 2: context load (enrichment + correlations)")
 
     records: dict[str, list[dict]] = step1_output["records"]
@@ -67,7 +149,13 @@ def run_step2_context_load(cfg: PipelineConfig, step1_output: dict) -> dict[str,
     # checks run as their own orchestrator steps right after this one — see
     # orchestrator.py — so each shows up as its own node in the pipeline
     # flowchart instead of being invisibly folded into this step.
-    anomaly_signals = detect_anomalies(records) if cfg.capabilities.detect_anomalies else []
+    anomaly_signals: list[dict] = []
+    if cfg.capabilities.detect_anomalies:
+        try:
+            anomaly_signals = _llm_detect_anomalies(records, llm, cfg)
+        except Exception as exc:
+            log.warning("LLM anomaly detection failed (%s); using the deterministic detector.", exc)
+            anomaly_signals = detect_anomalies(records)
 
     correlations: dict[str, Any] = {}
     for table, rows in records.items():

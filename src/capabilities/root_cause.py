@@ -29,8 +29,13 @@ def _dimension_day_totals(rows: list[dict], dimension: str) -> dict[tuple[str, s
     return totals
 
 
-def _drivers_for(rows: list[dict], date: str, flagged_dim: str | None) -> list[dict]:
-    drivers = []
+def candidate_drivers_for(rows: list[dict], date: str, flagged_dim: str | None) -> list[dict]:
+    """Every other dimension value present on ``date``, with its cost that day
+    vs. its own recent average — public data prep, shared by the
+    deterministic ``_drivers_for`` below (which applies the fixed
+    ``_DRIVER_PCT_THRESHOLD``) and orchestrator.py's LLM-first root-cause
+    agent (which judges what counts as a lead itself)."""
+    candidates = []
     for dim in _OTHER_DIMENSIONS:
         if dim == flagged_dim or not rows or dim not in rows[0]:
             continue
@@ -45,9 +50,20 @@ def _drivers_for(rows: list[dict], date: str, flagged_dim: str | None) -> list[d
             avg = sum(history) / len(history)
             if avg <= 0:
                 continue
-            pct = round((cost_that_day / avg - 1) * 100)
-            if pct > _DRIVER_PCT_THRESHOLD:
-                drivers.append({"dimension": dim, "value": value, "pct_above_own_avg": pct})
+            candidates.append({
+                "dimension": dim, "value": value,
+                "cost_that_day": round(cost_that_day, 6), "own_recent_avg": round(avg, 6),
+                "pct_above_own_avg": round((cost_that_day / avg - 1) * 100),
+            })
+    return candidates
+
+
+def _drivers_for(rows: list[dict], date: str, flagged_dim: str | None) -> list[dict]:
+    drivers = [
+        {"dimension": c["dimension"], "value": c["value"], "pct_above_own_avg": c["pct_above_own_avg"]}
+        for c in candidate_drivers_for(rows, date, flagged_dim)
+        if c["pct_above_own_avg"] > _DRIVER_PCT_THRESHOLD
+    ]
     drivers.sort(key=lambda d: d["pct_above_own_avg"], reverse=True)
     return drivers[:_MAX_DRIVERS]
 

@@ -19,21 +19,23 @@ step boundary so a frontend can stream progress to the user.
 
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
 
 from .actions import ActionStore, plan_actions
-from .capabilities.forecasting import forecast_costs
+from .capabilities.forecasting import daily_totals, forecast_costs
 from .capabilities.metadata import MetadataTracker
-from .capabilities.root_cause import explain_anomalies
-from .capabilities.tag_governance import check_tag_governance
+from .capabilities.root_cause import candidate_drivers_for, explain_anomalies
+from .capabilities.tag_governance import check_tag_governance, tag_exposure_snapshot
 from .config import PipelineConfig
 from .inputs import build_sources
 from .inputs.base import SourcePayload
 from .integrations.teams import notify_teams
 from .llm.client import LLMClient
+from .prompts import load_prompt
 from .pipeline import (
     run_budget_forecast,
     run_cost_anomaly,
@@ -58,7 +60,7 @@ EventCallback = Callable[[str, dict], None]
 # Friendly labels surfaced to the frontend. The verbs that animate in the UI
 # are picked client-side so we don't have to coordinate timing here.
 STEP_LABELS = {
-    "inputs":         ("Loading input sources",          "Sources loaded"),
+    "inputs":         ("Fetching cost data from AWS",     "Cost data fetched"),
     "step1":          ("Simplifying & normalizing",      "Normalized"),
     "step2":          ("Loading context & correlations", "Context loaded"),
     "forecast":       ("Forecasting cost trend",         "Forecast ready"),
@@ -88,38 +90,151 @@ def _emit(on_event: Optional[EventCallback], kind: str, payload: dict) -> None:
             log.warning("on_event raised: %s", exc)
 
 
+FORECAST_SYSTEM_PROMPT = load_prompt("forecast_costs")
+TAG_GOVERNANCE_SYSTEM_PROMPT = load_prompt("tag_governance")
+ROOT_CAUSE_SYSTEM_PROMPT = load_prompt("root_cause")
+
+
+def _llm_forecast_costs(records: dict, llm: LLMClient, cfg: PipelineConfig) -> dict:
+    totals = daily_totals(records)
+    if len(totals) < 2:
+        return {}
+    series = sorted(totals.items())  # [(date, cost), ...] chronological
+    user_prompt = (
+        "Daily total account spend, oldest first (untrusted data):\n"
+        + json.dumps(series, default=str, indent=2)
+    )
+    raw = llm.complete(system=FORECAST_SYSTEM_PROMPT, user=user_prompt, model=cfg.llm.model_analysis, max_tokens=600)
+    parsed = LLMClient.extract_json(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM forecast returned no usable JSON")
+    if parsed and "flag" not in parsed:
+        raise ValueError("LLM forecast response missing 'flag'")
+    return parsed
+
+
+def _llm_check_tag_governance(records: dict, llm: LLMClient, cfg: PipelineConfig) -> list[dict]:
+    snapshot = tag_exposure_snapshot(records)
+    if not snapshot:
+        return []
+    user_prompt = (
+        "Untagged-spend exposure per table (untrusted data):\n"
+        + json.dumps(snapshot, default=str, indent=2)
+    )
+    raw = llm.complete(system=TAG_GOVERNANCE_SYSTEM_PROMPT, user=user_prompt, model=cfg.llm.model_analysis, max_tokens=1000)
+    parsed = LLMClient.extract_json(raw)
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("findings"), list):
+        raise ValueError("LLM tag governance returned no usable JSON")
+    findings = []
+    for item in parsed["findings"]:
+        if not isinstance(item, dict) or not item.get("finding"):
+            continue
+        severity = item.get("severity")
+        findings.append({
+            "finding": str(item["finding"]),
+            "severity": severity if severity in ("low", "medium", "high") else "medium",
+            "evidence": str(item.get("evidence") or ""),
+            "source": "llm",
+            "table": item.get("table"),
+            "tag_column": item.get("tag_column"),
+            "rows_affected": item.get("rows_affected"),
+            "cost_exposed": item.get("cost_exposed"),
+        })
+    return findings
+
+
+def _llm_explain_anomalies(records: dict, signals: list[dict], llm: LLMClient, cfg: PipelineConfig) -> list[dict]:
+    candidates: dict[str, list[dict]] = {}
+    for finding in signals:
+        table, date = finding.get("table"), finding.get("date")
+        rows = (records or {}).get(table) or []
+        if not table or not date or not rows:
+            continue
+        found = candidate_drivers_for(rows, date, finding.get("dimension"))
+        if found:
+            candidates[finding["finding"]] = found
+    if not candidates:
+        return signals
+
+    user_prompt = (
+        "Anomalies and, for each, every other dimension value present on its date "
+        "with its cost that day vs. its own recent average (untrusted data):\n"
+        + json.dumps(candidates, default=str, indent=2)
+    )
+    raw = llm.complete(system=ROOT_CAUSE_SYSTEM_PROMPT, user=user_prompt, model=cfg.llm.model_analysis, max_tokens=1200)
+    parsed = LLMClient.extract_json(raw)
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("explained"), list):
+        raise ValueError("LLM root cause returned no usable JSON")
+
+    drivers_by_finding: dict[str, list[dict]] = {}
+    for item in parsed["explained"]:
+        if not isinstance(item, dict) or not item.get("finding"):
+            continue
+        drivers = [d for d in (item.get("drivers") or []) if isinstance(d, dict) and d.get("dimension") and d.get("value")]
+        if drivers:
+            drivers_by_finding[str(item["finding"])] = drivers
+
+    explained = []
+    for finding in signals:
+        drivers = drivers_by_finding.get(finding.get("finding"))
+        if not drivers:
+            explained.append(finding)
+            continue
+        updated = dict(finding)
+        updated["drivers"] = drivers
+        lead = ", ".join(f"{d['value']} ({d['dimension']}, +{d.get('pct_above_own_avg', '?')}%)" for d in drivers)
+        updated["evidence"] = f"{finding.get('evidence', '')} Coincided with a jump in: {lead}."
+        explained.append(updated)
+    return explained
+
+
 # Module-level (not closures) so they're independently unit-testable — each
 # wrapped in its own try/except, the same "never raise" contract every other
 # step in this pipeline follows (see risk.py's assess_risk and the step3_x
 # fallback paths): a guardrail/insight agent that can crash the whole run is
-# worse than one that's merely conservative for this run.
-def run_forecast_agent(records: dict, cfg: PipelineConfig) -> dict:
+# worse than one that's merely conservative for this run. Each tries an LLM
+# call first (the model judges what's worth flagging, no fixed threshold) and
+# only falls back to the deterministic capabilities/ function on a failed or
+# unusable call — never on a clean "nothing here" verdict from the LLM.
+def run_forecast_agent(records: dict, llm: LLMClient, cfg: PipelineConfig) -> dict:
     if not cfg.capabilities.forecast_costs:
         return {}
     try:
+        return _llm_forecast_costs(records, llm, cfg)
+    except Exception as exc:
+        log.warning("LLM cost forecast failed (%s); using the deterministic forecast.", exc)
+    try:
         return forecast_costs(records)
     except Exception as exc:
-        log.warning("Cost Forecast agent failed (%s); continuing without a forecast.", exc)
+        log.warning("Deterministic cost forecast also failed (%s); continuing without a forecast.", exc)
         return {}
 
 
-def run_tag_governance_agent(records: dict, cfg: PipelineConfig) -> list[dict]:
+def run_tag_governance_agent(records: dict, llm: LLMClient, cfg: PipelineConfig) -> list[dict]:
     if not cfg.capabilities.check_tag_governance:
         return []
     try:
+        return _llm_check_tag_governance(records, llm, cfg)
+    except Exception as exc:
+        log.warning("LLM tag governance failed (%s); using the deterministic check.", exc)
+    try:
         return check_tag_governance(records)
     except Exception as exc:
-        log.warning("Tag Governance agent failed (%s); continuing without tag findings.", exc)
+        log.warning("Deterministic tag governance also failed (%s); continuing without tag findings.", exc)
         return []
 
 
-def run_root_cause_agent(records: dict, signals: list[dict], cfg: PipelineConfig) -> list[dict]:
+def run_root_cause_agent(records: dict, signals: list[dict], llm: LLMClient, cfg: PipelineConfig) -> list[dict]:
     if not signals or not cfg.capabilities.explain_anomalies:
         return signals
     try:
+        return _llm_explain_anomalies(records, signals, llm, cfg)
+    except Exception as exc:
+        log.warning("LLM anomaly root-cause failed (%s); using the deterministic correlation.", exc)
+    try:
         return explain_anomalies(records, signals)
     except Exception as exc:
-        log.warning("Anomaly Root-Cause agent failed (%s); keeping anomalies without drivers.", exc)
+        log.warning("Deterministic anomaly root-cause also failed (%s); keeping anomalies without drivers.", exc)
         return signals
 
 
@@ -192,7 +307,7 @@ def run_pipeline(
     _start("step2")
     log.info("=== STEP 2: CONTEXT LOAD ===")
     tracker.record_stage("step2_context_load")
-    context = run_step2_context_load(cfg, step1)
+    context = run_step2_context_load(cfg, step1, llm)
     _done(
         "step2", {"total_cost": context["business_metadata"]["total_cost_observed"]},
         # Everything context load actually produced, except "records" — the
@@ -213,9 +328,9 @@ def run_pipeline(
 
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {
-            pool.submit(run_forecast_agent, context["records"], cfg): "forecast",
-            pool.submit(run_tag_governance_agent, context["records"], cfg): "tag_governance",
-            pool.submit(run_root_cause_agent, context["records"], context.get("anomaly_signals") or [], cfg): "root_cause",
+            pool.submit(run_forecast_agent, context["records"], llm, cfg): "forecast",
+            pool.submit(run_tag_governance_agent, context["records"], llm, cfg): "tag_governance",
+            pool.submit(run_root_cause_agent, context["records"], context.get("anomaly_signals") or [], llm, cfg): "root_cause",
         }
         for future in as_completed(futures):
             key = futures[future]

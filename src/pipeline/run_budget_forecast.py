@@ -1,12 +1,14 @@
 """Parallel agent — Budget Forecast (capable tier).
 
 One of four agents that replaced the old, single "Step 3.2: Analysis"
-LLM call (see orchestrator.py). This one narrates the deterministic
-cost-trend forecast already computed (``context["forecast"]``, see
-``capabilities/forecasting.py``) into trends and benchmark commentary — the
-forecast's own numbers are never recalculated here, only explained. Reads
-only ``context``, never another agent's output, so it can run fully in
-parallel with the other three.
+LLM call (see orchestrator.py). This one narrates the trend already computed
+(``context["forecast"]``) into trends and benchmark commentary — the
+forecast's own numbers are never recalculated here, only explained.
+``forecast`` itself comes from an LLM call in ``orchestrator.py``'s
+``run_forecast_agent`` (falling back to the deterministic
+``capabilities/forecasting.py`` only if that call fails). Reads only
+``context``, never another agent's output, so it can run fully in parallel
+with the other three.
 """
 
 from __future__ import annotations

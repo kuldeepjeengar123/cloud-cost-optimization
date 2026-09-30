@@ -157,7 +157,7 @@ def build_graph(
         _start("step2")
         log.info("=== STEP 2: CONTEXT LOAD ===")
         tracker.record_stage("step2_context_load")
-        context = run_step2_context_load(cfg, state["step1"])
+        context = run_step2_context_load(cfg, state["step1"], llm)
         _done("step2", {"total_cost": context["business_metadata"]["total_cost_observed"]})
         return {"context": context}
 
@@ -165,20 +165,20 @@ def build_graph(
     # docstring's third rule) — none of the three touch "context". ---
     def forecast_agent(state: PipelineState) -> dict:
         _start("forecast")
-        result = run_forecast_agent(state["context"]["records"], cfg)
+        result = run_forecast_agent(state["context"]["records"], llm, cfg)
         _done("forecast", {"flag": result.get("flag", False)})
         return {"forecast": result}
 
     def tag_governance_agent(state: PipelineState) -> dict:
         _start("tag_governance")
-        result = run_tag_governance_agent(state["context"]["records"], cfg)
+        result = run_tag_governance_agent(state["context"]["records"], llm, cfg)
         _done("tag_governance", {"findings": len(result)})
         return {"tag_findings": result}
 
     def root_cause_agent(state: PipelineState) -> dict:
         _start("root_cause")
         signals = state["context"].get("anomaly_signals") or []
-        result = run_root_cause_agent(state["context"]["records"], signals, cfg)
+        result = run_root_cause_agent(state["context"]["records"], signals, llm, cfg)
         _done("root_cause", {"anomalies": len(result)})
         return {"agent_anomaly_signals": result}
 

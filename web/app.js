@@ -8,7 +8,7 @@
 const {esc: escapeHtml, formatNumber, formatKpiValue, ICON, renderChartSpec, renderTable, renderLegend, fmtStepElapsed} = Shared;
 
 const STEP_DEFS = [
-  { key: "inputs",         name: "Loading input sources" },
+  { key: "inputs",         name: "Fetching cost data from AWS" },
   { key: "step1",          name: "Simplify & Normalize (LLM)" },
   { key: "step2",          name: "Context Load" },
   { key: "forecast",       name: "Cost Forecast" },
@@ -70,16 +70,13 @@ function startRun(query) {
   appendUserBubble(query);
   const { steps, refreshEdges, finalSlot } = appendAssistantBubble();
 
-  const sourceSel = $("#source");
-  const pick = sourceSel ? sourceSel.value : "local_csv";
-  const useRealAws = pick === "real_aws";
-  const sources = useRealAws ? ["cost_explorer", "cloudwatch"] : ["local_csv"];
-  const backend = useRealAws ? "aws" : "csv";
-
+  // Single target: AWS. The server always resolves to reading every CSV
+  // under docs/ plus the live AWS account regardless of what is sent here
+  // (see server.py's _handle_run), so this is sent for clarity only.
   fetch("/api/run", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, sources, backend }),
+    body: JSON.stringify({ query, target: "real_aws" }),
   })
     .then((res) => {
       if (!res.ok || !res.body) throw new Error("HTTP " + res.status);

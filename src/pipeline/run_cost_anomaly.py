@@ -2,12 +2,13 @@
 
 One of four agents that replaced the old, single "Step 3.2: Analysis"
 LLM call (see orchestrator.py) with four concurrently-running, narrowly
-scoped agents. This one narrates and prioritizes the anomalies already
-found by the deterministic day-over-day detector
-(``context["anomaly_signals"]``, see ``capabilities/anomaly_detection.py``)
-— same "detector proposes, LLM narrates" split every analysis step in this
-pipeline follows. Reads only ``context``, never another agent's output, so
-it can run fully in parallel with the other three.
+scoped agents. This one narrates and prioritizes the anomalies already found
+upstream in Step 2 (``context["anomaly_signals"]``) — an LLM call there
+first, falling back to the deterministic day-over-day detector
+(``capabilities/anomaly_detection.py``) only if that call fails; see
+``step2_context_load.py``'s ``_llm_detect_anomalies``. Reads only
+``context``, never another agent's output, so it can run fully in parallel
+with the other three.
 """
 
 from __future__ import annotations

@@ -14,8 +14,11 @@ _MIN_POINTS = 6  # fewer days than this and a trend split isn't meaningful
 _TREND_FLAG_PCT = 15  # recent-half vs. prior-half growth worth flagging
 
 
-def _daily_totals(records: dict[str, list[dict]]) -> dict[str, float]:
-    """Sum cost per date across every table that has date+cost columns."""
+def daily_totals(records: dict[str, list[dict]]) -> dict[str, float]:
+    """Sum cost per date across every table that has date+cost columns —
+    public: this is the same data prep orchestrator.py's LLM-first forecast
+    agent feeds the model, before ``forecast_costs`` below ever applies its
+    own fixed-rule trend split to it."""
     totals: dict[str, float] = defaultdict(float)
     for rows in (records or {}).values():
         if not rows or "cost" not in rows[0] or "date" not in rows[0]:
@@ -35,7 +38,7 @@ def forecast_costs(records: dict[str, list[dict]]) -> dict:
     a 30-day total. Returns ``{}`` (no opinion) when there isn't enough daily
     history to trust a trend — a flat/short series is not worth projecting.
     """
-    totals = _daily_totals(records)
+    totals = daily_totals(records)
     if len(totals) < _MIN_POINTS:
         return {}
 
