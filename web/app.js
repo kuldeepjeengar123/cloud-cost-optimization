@@ -209,10 +209,21 @@ function renderFinal(slot, result) {
     (a) => `${severityBadge(a.severity)}${a.source === "detector" ? '<span class="chip" title="Found by the statistical anomaly detector, not the LLM">detected</span> ' : ""}${escapeHtml(a.finding || "")} <span style="color:var(--text-muted)">— ${escapeHtml(a.evidence || "")}</span>`);
   const trendsHtml = renderList("Trends", analysis.trends || [],
     (t) => `${escapeHtml(t.observation || "")} <span style="color:var(--text-muted)">(${escapeHtml(t.metric || "")})</span>`);
+  const benchmarksHtml = renderList("Benchmarks", analysis.benchmarks || [],
+    (b) => `<b>${escapeHtml(b.metric || "")}</b>: ${escapeHtml(formatKpiValue(b.value))} <span style="color:var(--text-muted)">— ${escapeHtml(b.threshold_note || "")}</span>`);
   const findingsHtml = renderList("Key findings", summary.key_findings || [], (s) => escapeHtml(s));
   const recsHtml = renderList("Recommendations", summary.recommendations || [],
     (r) => `${severityBadge(r.impact)}${escapeHtml(r.action || "")}`);
   const nextStepsHtml = renderList("Next steps", summary.next_steps || [], (s) => escapeHtml(s));
+  const usageReport = analysis.usage_report || {};
+  const usageReportHtml = (usageReport.usage_summary || (usageReport.highlights || []).length)
+    ? `<div class="rr-section"><h4>Usage report</h4>
+        ${usageReport.usage_summary ? `<p>${escapeHtml(usageReport.usage_summary)}</p>` : ""}
+        ${(usageReport.highlights || []).length
+          ? `<ul class="rr-list">${usageReport.highlights.map((h) => `<li>${escapeHtml(h)}</li>`).join("")}</ul>`
+          : ""}
+       </div>`
+    : "";
 
   const actionsHtml = renderActions(result?.actions || [], result?.action_backend || "csv");
 
@@ -257,7 +268,7 @@ function renderFinal(slot, result) {
 
   slot.innerHTML = `
     <div class="rr-kpi-grid">${totalCard}${kpiCards}</div>
-    ${findingsHtml}${anomaliesHtml}${trendsHtml}${recsHtml}${nextStepsHtml}
+    ${findingsHtml}${anomaliesHtml}${trendsHtml}${benchmarksHtml}${recsHtml}${nextStepsHtml}${usageReportHtml}
     ${fleetHtml}${actionsHtml}${chartsHtml}${files}${followUpHtml}
   `;
 

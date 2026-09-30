@@ -21,6 +21,13 @@ prompt this module sends is loaded from ``src/prompts/*.md`` — see
 ``src.prompts.load_prompt`` — and composed here with the live, per-request
 pieces (the role framing, the approval queue, the dashboard's filters, prior
 conversation turns) that can't live in a static file.
+
+Both directions of every turn also pass through
+``src.integrations.chat.guardrails``: an incoming question is scrubbed of
+anything credential-shaped before it reaches the LLM prompt or is persisted,
+and an outgoing answer is scrubbed of this deployment's own known secrets
+(plus the same generic credential shapes) before it is cached, logged, or
+returned — regardless of mode, and whether streamed or not.
 """
 
 from __future__ import annotations
@@ -33,6 +40,7 @@ from typing import TYPE_CHECKING, Optional
 from ...llm.client import LLMClient, LLMError
 from ...prompts import load_prompt
 from ...utils.logger import get_logger
+from .guardrails import redact_secrets, scrub_user_input
 from .memory import AnswerCache, ChatContextCache, ChatHistoryStore
 
 if TYPE_CHECKING:
@@ -316,7 +324,10 @@ def answer_question(
     instead of a failed request, matching how the rest of the action API
     never 500s a user-facing button.
     """
-    question = (question or "").strip()
+    # Scrubbed before it ever reaches the LLM prompt, the cache key, or
+    # Postgres history — a user pasting a real credential into the chat box
+    # must not have it forwarded to a third-party API or persisted anywhere.
+    question = scrub_user_input((question or "").strip())
     role = role if role in ROLE_CONTEXT else ROLE_EMPLOYEE
     insights_path = None if pipeline_running else latest_insights_path(cfg)
     mode = MODE_RAG if insights_path is not None else MODE_INFO
@@ -358,6 +369,11 @@ def answer_question(
         result = _answer_info(question, cfg, pipeline_running, role, queue_snapshot, convo_context, filters_block)
     else:
         result = _answer_rag(question, cfg, insights_path, role, queue_snapshot, convo_context, filters_block)
+
+    # Belt-and-braces: redact this deployment's own secrets (and any
+    # generically-shaped credential) out of the model's answer before it is
+    # cached, persisted, or returned — see src/integrations/chat/guardrails.py.
+    result["answer"] = redact_secrets(result.get("answer", ""), cfg)
 
     no_cache = result.pop("_no_cache", False)
     if cache is not None and not no_cache:
@@ -485,7 +501,7 @@ def stream_answer_question(
     uniform whether or not the LLM was actually called this turn. ``actions``
     is the live approval queue — see ``answer_question``.
     """
-    question = (question or "").strip()
+    question = scrub_user_input((question or "").strip())
     role = role if role in ROLE_CONTEXT else ROLE_EMPLOYEE
     insights_path = None if pipeline_running else latest_insights_path(cfg)
     mode = MODE_RAG if insights_path is not None else MODE_INFO
@@ -527,6 +543,12 @@ def stream_answer_question(
         )
         client = LLMClient(cfg.llm)
         for delta in client.stream(system, user_prompt, model=cfg.llm.model_chat):
+            # Best-effort: catches a secret that lands whole within one
+            # chunk. A secret split across a chunk boundary won't be caught
+            # here, but the reassembled ``full_text`` below is redacted
+            # again before it's cached or persisted, so nothing sensitive
+            # is retained even in that edge case.
+            delta = redact_secrets(delta, cfg)
             chunks.append(delta)
             yield "delta", {"text": delta}
     except (LLMError, OSError, json.JSONDecodeError) as exc:
@@ -545,7 +567,7 @@ def stream_answer_question(
 
     raw_text = "".join(chunks).strip()
     if raw_text:
-        full_text = raw_text
+        full_text = redact_secrets(raw_text, cfg)
     else:
         full_text = _fallback_reply(mode, pipeline_running, role)["answer"]
         should_cache = False

@@ -62,6 +62,12 @@ def _render_markdown(combined: dict, metadata: dict) -> str:
             lines.append(f"- {t.get('observation', '')} ({t.get('metric', '')})")
         lines.append("")
 
+    if analysis.get("benchmarks"):
+        lines.append("## Benchmarks")
+        for b in analysis["benchmarks"]:
+            lines.append(f"- **{b.get('metric', '')}**: {b.get('value', '')} — {b.get('threshold_note', '')}")
+        lines.append("")
+
     forecast = analysis.get("forecast") or {}
     if forecast:
         lines.append("## Cost Forecast")
@@ -97,6 +103,15 @@ def _render_markdown(combined: dict, metadata: dict) -> str:
         lines.append("## Next Steps")
         for ns in summary["next_steps"]:
             lines.append(f"- {ns}")
+        lines.append("")
+
+    usage_report = analysis.get("usage_report") or {}
+    if usage_report.get("usage_summary") or usage_report.get("highlights"):
+        lines.append("## Usage Report")
+        if usage_report.get("usage_summary"):
+            lines.append(usage_report["usage_summary"])
+        for h in usage_report.get("highlights") or []:
+            lines.append(f"- {h}")
         lines.append("")
 
     charts = combined.get("charts", [])

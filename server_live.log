@@ -477,3 +477,179 @@
 17:45:36 | INFO    | server                 | 127.0.0.1 - "GET /api/actions HTTP/1.1" 200 -
 17:45:38 | INFO    | server                 | 127.0.0.1 - "GET /api/aws/fleet HTTP/1.1" 200 -
 17:45:43 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:45:51 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:45:59 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:46:07 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:46:15 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:46:23 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:46:31 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:46:39 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:47:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:48:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:49:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:50:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:51:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:52:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:53:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:54:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:55:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:56:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:57:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:58:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+17:59:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+18:00:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+18:01:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+18:02:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+18:03:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+18:04:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+18:05:33 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+08:59:32 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+08:59:36 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:00:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:01:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:02:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:03:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:04:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:05:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:06:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:07:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:08:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:09:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:10:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:11:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:12:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:13:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:14:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:15:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:16:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:17:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:18:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:19:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:39:08 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:39:27 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:40:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:41:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:42:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:43:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:44:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:45:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:46:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:47:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:48:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:49:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:50:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:51:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:52:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:53:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:54:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:55:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:56:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:57:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:58:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+09:59:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:00:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:01:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:02:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:03:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:04:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:05:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:06:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:07:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:08:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:09:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:10:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:11:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:12:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:13:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:14:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:15:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:16:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:17:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:18:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:19:32 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:20:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:20:55 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:20:58 | INFO    | server                 | 127.0.0.1 - "GET / HTTP/1.1" 200 -
+10:20:58 | INFO    | server                 | 127.0.0.1 - "GET /shared.css HTTP/1.1" 200 -
+10:20:58 | INFO    | server                 | 127.0.0.1 - "GET /shared.js HTTP/1.1" 200 -
+10:20:58 | INFO    | server                 | 127.0.0.1 - "GET /chatbot.css HTTP/1.1" 200 -
+10:20:58 | INFO    | server                 | 127.0.0.1 - "GET /chatbot.js HTTP/1.1" 200 -
+10:20:58 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:20:58 | INFO    | server                 | 127.0.0.1 - "GET /api/target HTTP/1.1" 200 -
+10:20:58 | INFO    | server                 | 127.0.0.1 - "GET /api/decisions HTTP/1.1" 200 -
+10:20:58 | INFO    | server                 | 127.0.0.1 - "GET /api/actions HTTP/1.1" 200 -
+10:20:59 | INFO    | server                 | 127.0.0.1 - "GET /api/aws/fleet HTTP/1.1" 200 -
+10:21:06 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:21:10 | INFO    | server                 | Cleared 1 action(s) from a previous run before starting a new one
+10:21:10 | INFO    | server                 | 127.0.0.1 - "POST /api/run HTTP/1.1" 200 -
+10:21:10 | INFO    | orchestrator           | === INPUT SOURCES ===
+10:21:10 | INFO    | inputs.local_csv       | Loaded 503 rows from ec2_instance_cost.csv
+10:21:10 | INFO    | inputs.local_csv       | Loaded 240 rows from region_cost.csv
+10:21:10 | INFO    | inputs.local_csv       | Loaded 417 rows from service_daily_cost.csv
+10:21:10 | INFO    | inputs.local_csv       | Loaded 180 rows from tag_cost.csv
+10:21:10 | INFO    | orchestrator           | === STEP 1: SIMPLIFY & NORMALIZE ===
+10:21:10 | INFO    | pipeline.step1         | Step 1: simplify & normalize across 1 source(s)
+10:21:10 | INFO    | capabilities.normalization | normalize: 503 rows in ec2_instance_cost
+10:21:10 | INFO    | capabilities.normalization | normalize: 240 rows in region_cost
+10:21:10 | INFO    | capabilities.normalization | normalize: 417 rows in service_daily_cost
+10:21:10 | INFO    | capabilities.normalization | normalize: 180 rows in tag_cost
+10:21:14 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:21:22 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:21:22 | INFO    | orchestrator           | === STEP 2: CONTEXT LOAD ===
+10:21:22 | INFO    | pipeline.step2         | Step 2: context load (enrichment + correlations)
+10:21:22 | INFO    | capabilities.enrichment | enrich: added derived fields to 503 rows in ec2_instance_cost
+10:21:22 | INFO    | capabilities.enrichment | enrich: added derived fields to 240 rows in region_cost
+10:21:22 | INFO    | capabilities.enrichment | enrich: added derived fields to 417 rows in service_daily_cost
+10:21:22 | INFO    | capabilities.enrichment | enrich: added derived fields to 180 rows in tag_cost
+10:21:22 | INFO    | orchestrator           | === STEP 3.1 + STEP 3.2 REPLACEMENT: PARALLEL AGENTS ===
+10:21:22 | INFO    | pipeline.step3.1       | Step 3.1: generate chart specs
+10:21:22 | INFO    | pipeline.run_cost_anomaly | Cost anomaly agent
+10:21:22 | INFO    | pipeline.run_budget_forecast | Budget forecast agent
+10:21:22 | INFO    | pipeline.run_optimisation_recommendation | Optimisation recommendation agent
+10:21:22 | INFO    | pipeline.run_usage_report | Usage report agent
+10:21:30 | WARNING | pipeline.run_usage_report | Usage report agent did not return JSON; returning empty report.
+10:21:30 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:21:38 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:21:46 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:21:54 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:22:02 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:22:10 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:22:18 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:22:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:22:34 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:22:42 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:22:42 | WARNING | pipeline.run_cost_anomaly | Cost anomaly agent did not return JSON; using detector findings only.
+10:22:43 | INFO    | orchestrator           | === STEP 3.3: SUMMARY ===
+10:22:43 | INFO    | pipeline.step3.3       | Step 3.3: executive summary
+10:23:02 | INFO    | orchestrator           | === STEP 4: COMBINE ===
+10:23:02 | INFO    | pipeline.step4         | Step 4: combine visual + analytical + summary
+10:23:02 | INFO    | orchestrator           | === STEP 5: FINAL RESPONSE ===
+10:23:02 | INFO    | pipeline.step5         | Step 5: finalize & persist
+10:23:02 | INFO    | pipeline.step5         | Wrote insights_20260930_045302.json and insights_20260930_045302.md
+10:23:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:23:26 | INFO    | actions.planner        | Planned 7 actions (5 executable) from 8 recommendations
+10:23:26 | INFO    | integrations.teams     | No TEAMS_WEBHOOK_URL set; skipping Teams notification.
+10:23:26 | INFO    | server                 | 127.0.0.1 - "GET /api/target HTTP/1.1" 200 -
+10:23:26 | INFO    | server                 | 127.0.0.1 - "GET /api/decisions HTTP/1.1" 200 -
+10:23:26 | INFO    | server                 | 127.0.0.1 - "GET /api/actions HTTP/1.1" 200 -
+10:23:27 | INFO    | server                 | 127.0.0.1 - "GET /api/aws/fleet HTTP/1.1" 200 -
+10:24:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:25:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:26:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:27:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:28:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:29:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:30:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:31:26 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:32:13 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:32:15 | INFO    | server                 | 127.0.0.1 - "GET / HTTP/1.1" 200 -
+10:32:15 | INFO    | server                 | 127.0.0.1 - "GET /shared.css HTTP/1.1" 200 -
+10:32:15 | INFO    | server                 | 127.0.0.1 - "GET /chatbot.css HTTP/1.1" 200 -
+10:32:15 | INFO    | server                 | 127.0.0.1 - "GET /shared.js HTTP/1.1" 200 -
+10:32:15 | INFO    | server                 | 127.0.0.1 - "GET /chatbot.js HTTP/1.1" 200 -
+10:32:15 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -
+10:32:15 | INFO    | server                 | 127.0.0.1 - "GET /api/actions HTTP/1.1" 200 -
+10:32:15 | INFO    | server                 | 127.0.0.1 - "GET /api/decisions HTTP/1.1" 200 -
+10:32:15 | INFO    | server                 | 127.0.0.1 - "GET /api/target HTTP/1.1" 200 -
+10:32:17 | INFO    | server                 | 127.0.0.1 - "GET /api/aws/fleet HTTP/1.1" 200 -
+10:32:24 | INFO    | server                 | 127.0.0.1 - "GET /api/chat/status HTTP/1.1" 200 -

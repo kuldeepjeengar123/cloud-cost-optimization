@@ -848,16 +848,27 @@ function renderFinalReport(result){
     "Unusual day-over-day cost spikes relative to each item's own baseline — not the same as which service/instance type costs the most overall (see the charts below for that).");
   const trendsHtml = rrList("Trends", analysis.trends || [],
     t => `${esc(t.observation || "")} <span style="color:var(--text-muted)">(${esc(t.metric || "")})</span>`);
+  const benchmarksHtml = rrList("Benchmarks", analysis.benchmarks || [],
+    b => `<b>${esc(b.metric || "")}</b>: ${esc(rrKpiValue(b.value))} <span style="color:var(--text-muted)">— ${esc(b.threshold_note || "")}</span>`);
   const recsHtml = rrList("Recommendations from this run", recItems,
     r => `${rrBadge(r.impact)}${esc(r.action || r.title || "")}`);
   const nextStepsHtml = rrList("Next steps", summary.next_steps || [], s => esc(s));
+  const usageReport = analysis.usage_report || {};
+  const usageReportHtml = (usageReport.usage_summary || (usageReport.highlights || []).length)
+    ? `<div class="rr-section"><h4>Usage report</h4>
+        ${usageReport.usage_summary ? `<p>${esc(usageReport.usage_summary)}</p>` : ""}
+        ${(usageReport.highlights || []).length
+          ? `<ul class="rr-list">${usageReport.highlights.map(h => `<li>${esc(h)}</li>`).join("")}</ul>`
+          : ""}
+       </div>`
+    : "";
 
   host.innerHTML = `
     <div class="rr-section"><h4>Results — ${esc(latestPipelinePayload.run_id || "this run")}</h4>
       <div class="rr-kpi-grid">${totalCard}${kpiCards}</div>
       <p class="csub" style="margin-top:9px">Charts below (Where the money goes, Daily spend, Cost by region, Cost by EC2 instance type) now reflect this run.</p>
     </div>
-    ${findingsHtml}${anomaliesHtml}${trendsHtml}${recsHtml}${nextStepsHtml}`;
+    ${findingsHtml}${anomaliesHtml}${trendsHtml}${benchmarksHtml}${recsHtml}${nextStepsHtml}${usageReportHtml}`;
   host.hidden = false;
 
   const provCharts = document.getElementById("provCharts");
