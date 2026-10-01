@@ -502,7 +502,7 @@ const ST_LABEL = {
 };
 
 const EMPLOYEE = {name:"Kuldeep Jeengar", initials:"KJ", role:"Engineer · Project Atlas"};
-const RE_USER  = {name:"Priya Raman", initials:"PR", role:"Resource Engineering · Approver"};
+const RE_USER  = {name:"Sandesh", initials:"SA", role:"Resource Engineering · Approver"};
 
 /* =========================================================================
    1b. BACKEND INTEGRATION
@@ -656,10 +656,25 @@ function mapAction(a){
 }
 function mapDecision(e){
   const kind = e.decision === "approved" ? "ok" : e.decision === "declined" ? "no" : "wait";
+  const who = e.actor || "unknown";
+  // Every decision kind the backend writes (src/actions/approval.py's _log()
+  // and rollback.py's own call) gets the actor who did it attached — not
+  // just approved/declined — so "who raised this" and "who staged it" show
+  // up in the feed, not just "who committed it". An unrecognized future
+  // decision string still falls back to showing the actor, via the `|| ...`
+  // below, instead of silently dropping the name.
   const label = {
-    raised:"Raised for approval", withdrawn:"Withdrawn by requester", reopened:"Reopened",
-    approved:"Approved by " + (e.actor || "RE team"), declined:"Declined by " + (e.actor || "RE team")
-  }[e.decision] || e.decision;
+    raised: "Raised for approval by " + who,
+    withdrawn: "Withdrawn by " + who,
+    reopened: "Reopened by " + who,
+    staged_approve: "Staged to approve by " + who,
+    staged_decline: "Staged to decline by " + who,
+    unstaged: "Unstaged by " + who,
+    approved: "Approved by " + who,
+    declined: "Declined by " + who,
+    commit_failed: "Commit failed, left staged — by " + who,
+    rolled_back: "Rolled back by " + who,
+  }[e.decision] || (e.decision + (e.actor ? " by " + who : ""));
   return {at: fmtTime(e.at) || "—", id:e.action_id, title:e.title, decision:label, kind,
           savings:e.estimated_savings || 0, note:e.note || ""};
 }

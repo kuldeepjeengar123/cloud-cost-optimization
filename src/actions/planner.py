@@ -110,7 +110,10 @@ def _plan_nano_micro_swap_actions(run_id: str, cfg: "PipelineConfig", executor) 
         if size == "nano":
             direction, reason, impact = "Upgrade", "undersized for steady load", "medium"
         else:
-            direction, reason, impact = "Downgrade", "oversized for an idle/low-traffic workload", "low"
+            # High, not low: downsizing to the smallest instance size leaves
+            # the least headroom against an unexpected load spike, so this
+            # carries more exposure than upsizing does, not less.
+            direction, reason, impact = "Downgrade", "oversized for an idle/low-traffic workload", "high"
         title = (f"{direction} {instance_id} from {itype} to {target_type} "
                  f"({reason}) — currently {state}")
 
@@ -231,6 +234,13 @@ def plan_actions(
             title, impact = str(rec).strip(), "medium"
         if not title:
             continue
+
+        # Capped at medium: these are acknowledge-only, nothing is actually
+        # applied, so "high" would overstate what a manual action represents
+        # — reserve that label for the nano/micro swap, the one action that
+        # actually executes against AWS.
+        if impact == "high":
+            impact = "medium"
 
         matches = _match_all_entities(title, catalog)
         action = Action.manual(run_id=run_id, title=title, impact=impact)

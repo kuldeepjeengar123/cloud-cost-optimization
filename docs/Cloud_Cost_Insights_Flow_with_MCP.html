@@ -1,0 +1,627 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Cloud Cost Insights Flow with MCP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one banded SVG per view (layers stacked top to bottom), followed by reference tables and a demo order. */
+:root{
+  color-scheme: dark;
+  --bg:#0b1020; --panel:#121a2e; --panel2:#18223a; --line:#2a3654;
+  --text:#e6ebf5; --muted:#93a0bb; --arrow:#8390ae;
+  --in:#7fb4d9; --m1:#4ea1ff; --m2:#a78bfa; --m3:#f5a524; --m4:#34d399; --mcp:#f472b6;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    color-scheme: light;
+    --bg:#f4f6fb; --panel:#ffffff; --panel2:#eceff7; --line:#d2d9e6;
+    --text:#131a2c; --muted:#56617a; --arrow:#6b7690;
+    --in:#3b6f94; --m1:#1f6fd1; --m2:#6a4bd6; --m3:#a86400; --m4:#0d8559; --mcp:#c2367f;
+  }
+}
+:root[data-theme="light"]{
+  color-scheme: light;
+  --bg:#f4f6fb; --panel:#ffffff; --panel2:#eceff7; --line:#d2d9e6;
+  --text:#131a2c; --muted:#56617a; --arrow:#6b7690;
+  --in:#3b6f94; --m1:#1f6fd1; --m2:#6a4bd6; --m3:#a86400; --m4:#0d8559; --mcp:#c2367f;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font:15px/1.55 var(--sans);margin:0}
+.wrap{max-width:1260px;margin:0 auto;padding-inline:24px;padding-block:28px 64px}
+@media (max-width:600px){.wrap{padding-inline:16px}}
+a{color:inherit}
+header{display:grid;gap:14px;padding-block:8px 20px}
+.kicker{font:500 12px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+h1{font:700 clamp(28px,4vw,42px)/1.1 var(--cond);margin:0;text-wrap:balance;letter-spacing:-.01em}
+.lede{color:var(--muted);max-width:70ch;margin:0}
+.mods{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:6px}
+@media (max-width:860px){.mods{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:460px){.mods{grid-template-columns:1fr}}
+.mod{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:baseline;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);min-width:0}
+.mod b{font:700 20px var(--cond);grid-row:span 2}
+.mod span{font-weight:600;font-size:14px}
+.mod small{color:var(--muted);font:500 12px var(--mono);word-break:break-word}
+.k-m1 b{color:var(--m1)} .k-m2 b{color:var(--m2)} .k-m3 b{color:var(--m3)} .k-m4 b{color:var(--m4)} .k-mcp b{color:var(--mcp)}
+.entry{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:13.5px}
+.entry code{margin-right:4px}
+nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:4px 18px;padding-block:10px;margin-bottom:8px}
+nav a{font:500 13px var(--mono);color:var(--muted);text-decoration:none;padding:4px 0}
+nav a:hover,nav a:focus-visible{color:var(--text)}
+nav .theme{margin-left:auto;background:none;border:1px solid var(--line);color:var(--muted);border-radius:6px;font:500 12px var(--mono);padding:4px 10px;cursor:pointer}
+nav .theme:hover{color:var(--text)}
+:focus-visible{outline:2px solid var(--m2);outline-offset:2px}
+section{padding-block:26px 8px;scroll-margin-top:56px}
+h2{font:700 24px/1.2 var(--cond);margin:0 0 6px}
+.sub{color:var(--muted);margin:0 0 18px;max-width:72ch}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--bg);padding:14px}
+.dg{display:block;width:100%;min-width:1000px;height:auto}
+
+/* svg */
+.band{stroke-width:1}
+.bd-in{fill:var(--in);fill-opacity:.05;stroke:var(--in);stroke-opacity:.3}
+.bd-m1{fill:var(--m1);fill-opacity:.06;stroke:var(--m1);stroke-opacity:.35}
+.bd-m2{fill:var(--m2);fill-opacity:.07;stroke:var(--m2);stroke-opacity:.45}
+.bd-m3{fill:var(--m3);fill-opacity:.06;stroke:var(--m3);stroke-opacity:.35}
+.bd-m4{fill:var(--m4);fill-opacity:.06;stroke:var(--m4);stroke-opacity:.35}
+.box,.svc{fill:var(--panel);stroke-width:1.3}
+.bx-in{stroke:var(--in)} .bx-m1{stroke:var(--m1)} .bx-m2{stroke:var(--m2)} .bx-m3{stroke:var(--m3)} .bx-m4{stroke:var(--m4)}
+.svc{stroke-opacity:.55;fill:var(--panel2)}
+.dash{stroke-dasharray:5 4}
+.c-in{fill:var(--in)} .c-m1{fill:var(--m1)} .c-m2{fill:var(--m2)} .c-m3{fill:var(--m3)} .c-m4{fill:var(--m4)}
+.eb{font:600 10.5px var(--mono);letter-spacing:.06em}
+.tt{font:600 14.5px var(--sans);fill:var(--text)}
+.ln{font:400 11.5px var(--sans);fill:var(--muted)}
+.mono-s{font:500 10.5px var(--mono);fill:var(--muted);letter-spacing:.02em}
+.bcode{font:700 26px var(--cond)}
+.bname{font:600 13px var(--sans);fill:var(--text)}
+.brole{font:400 11px var(--mono);fill:var(--muted)}
+.deep{font:500 11px var(--mono);text-decoration:underline}
+.cap{font:600 10.5px var(--mono);letter-spacing:.1em;fill:var(--muted)}
+.sn{font:600 12px var(--sans);fill:var(--text)}
+.sd{font:400 10.5px var(--sans);fill:var(--muted)}
+.nm{font:600 12.5px var(--mono);fill:var(--text)}
+.tiny{font:500 10px var(--mono)}
+.pl{font:500 12px var(--sans);fill:var(--muted)}
+.pill{fill:var(--bg);stroke:var(--line)}
+.pg{fill:var(--bg);stroke:var(--m4);stroke-opacity:.6}
+.pt{font:500 10.5px var(--mono);fill:var(--text)}
+.flow{fill:none;stroke:var(--arrow);stroke-width:1.5;marker-end:url(#ah)}
+.flow.nohead{marker-end:none}
+.flow.fb{stroke:var(--m4);stroke-dasharray:6 4;marker-end:url(#ahg)}
+.flow.both{marker-start:url(#ahg)}
+.flow.v{marker-end:url(#bh)}
+.flow.v.nohead{marker-end:none}
+.flow.v.fb{marker-end:url(#bhg)}
+.ahf{fill:var(--arrow)} .ahg{fill:var(--m4)}
+.deliv{fill:none;stroke:var(--line);stroke-dasharray:6 5}
+.chip{fill:var(--panel);stroke:var(--line)}
+.plat{fill:var(--panel);stroke:var(--line)}
+.term{fill:var(--panel2);stroke:var(--m2);stroke-width:1.3}
+.tm{font:600 10px var(--mono);fill:var(--text)}
+
+.bd-mcp{fill:var(--mcp);fill-opacity:.06;stroke:var(--mcp);stroke-opacity:.4}
+.bx-mcp{stroke:var(--mcp)} .c-mcp{fill:var(--mcp)} .t-mcp{color:var(--mcp)}
+.flow.mc{stroke:var(--mcp);stroke-dasharray:6 4;marker-end:url(#ahm)}
+.flow.mc.both{marker-start:url(#ahm)}
+.ahm{fill:var(--mcp)}
+.pm{fill:var(--bg);stroke:var(--mcp);stroke-opacity:.6}
+/* notes */
+.legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:12px;color:var(--muted);font-size:13px}
+.legend span{display:inline-flex;align-items:center;gap:8px}
+.legend i{display:inline-block;width:26px;height:0;border-top:2px solid var(--arrow)}
+.legend i.fb{border-top:2px dashed var(--m4)}
+.legend i.dx{border:1.5px dashed var(--m4);width:18px;height:12px;border-radius:3px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:16px}
+.card{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:var(--panel)}
+.card h3{font:600 14px var(--sans);margin:0 0 4px}
+.card p{margin:0;color:var(--muted);font-size:13.5px}
+code{font:500 12.5px var(--mono);background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--text)}
+.tag{display:inline-block;font:600 11px var(--mono);padding:2px 7px;border-radius:5px;border:1px solid currentColor;white-space:nowrap}
+.t-in{color:var(--in)} .t-m1{color:var(--m1)} .t-m2{color:var(--m2)} .t-m3{color:var(--m3)} .t-m4{color:var(--m4)} .t-all{color:var(--muted)}
+.now{font:500 11px var(--mono);color:var(--m3);display:block;margin-top:6px}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:680px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+td:first-child{font-weight:600;white-space:nowrap}
+td:last-child{color:var(--muted)}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.tbl tr:last-child td{border-bottom:0}
+ol.demo{list-style:none;counter-reset:s;padding:0;margin:0;display:grid;gap:10px}
+ol.demo li{counter-increment:s;display:grid;grid-template-columns:40px auto 1fr;gap:12px;align-items:baseline;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+ol.demo li::before{content:counter(s,decimal-leading-zero);font:600 13px var(--mono);color:var(--muted)}
+ol.demo li p{margin:0;min-width:0}
+@media (max-width:560px){ol.demo li{grid-template-columns:32px 1fr}ol.demo li .tag{grid-column:2}ol.demo li p{grid-column:2}}
+footer{margin-top:36px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--line);padding-top:14px}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="kicker">System architecture · 4 layers + MCP · end to end</div>
+  <h1>Cloud Cost Insights Flow with MCP</h1>
+  <p class="lede">AWS cost data comes in from CloudWatch, Cost Explorer or local CSV files and is cleaned into one shape. An LLM pipeline normalises it and loads context, and parallel agents turn it into charts, KPIs, anomalies, forecasts and recommendations. The delivery layer writes the report, and a person must approve every recommendation before anything changes in AWS. The MCP server gives AI agents the same approval path, with the RE-team decision tools locked behind a token.</p>
+  <div class="mods">
+    <div class="mod k-m1"><b>L1</b><span>Ingestion &amp; Data Quality</span><small>src/inputs · src/capabilities</small></div>
+    <div class="mod k-m2"><b>L2</b><span>LLM Pipeline Core</span><small>src/pipeline · src/llm · src/prompts</small></div>
+    <div class="mod k-m3"><b>L3</b><span>Analysis Agents &amp; Memory</span><small>pipeline/run_* · src/storage</small></div>
+    <div class="mod k-m4"><b>L4</b><span>Output, Approval &amp; Delivery</span><small>src/actions · src/aws · integrations</small></div>
+    <div class="mod k-mcp"><b>MCP</b><span>Agent Access &amp; RE Workflow</span><small>src/mcp_server · mcp_server.py</small></div>
+  </div>
+  <div class="entry"><span><code>main.py</code>command line</span><span><code>server.py</code>web dashboard on :8765</span><span><code>mcp_server.py</code>MCP tools for AI agents</span><span>All three call <code>src/orchestrator.py</code></span></div>
+</header>
+
+<nav aria-label="Sections">
+  <a href="#overview">End-to-end</a>
+  <a href="#run-graph">Run graph</a>
+  <a href="#mcp">RE-team MCP</a>
+  <a href="#contracts">Hand-offs</a>
+  <a href="#steps">Step map</a>
+  <a href="#demo">Demo order</a>
+  <button class="theme" id="themeBtn" type="button">Theme</button>
+</nav>
+
+<section id="overview">
+  <h2>End-to-end flow</h2>
+  <p class="sub">Each band is one layer of the code. Steps 1 to 5 follow the reference architecture. Dashed green lines show where human decisions are recorded and where they can be undone.</p>
+  <div class="scroll"><svg class="dg" viewBox="0 0 1210 1500" role="img" aria-labelledby="dg1t"><title id="dg1t">End-to-end architecture across layers L1 to L4</title><defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahf"/></marker>
+<marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahg"/></marker>
+<marker id="ahm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahm"/></marker>
+</defs>
+<!-- IN -->
+<rect class="band bd-in" x="2" y="0" width="1206" height="112" rx="14"/>
+<text class="bcode c-in" x="18" y="40">IN</text><text class="bname" x="18" y="62">Input sources</text><text class="brole" x="18" y="82">3 feeds · src/inputs</text>
+<rect class="box bx-in" x="190" y="14" width="322" height="88" rx="10"/>
+<text class="eb c-in" x="206" y="36">INPUT SOURCE 1</text>
+<text class="tt" x="206" y="56">CloudWatch API</text>
+<text class="ln" x="206" y="74">EC2 metrics such as CPUUtilization, via boto3</text>
+<text class="mono-s" x="206" y="91">cloudwatch_api.py · needs AWS credentials</text>
+<rect class="box bx-in" x="534" y="14" width="322" height="88" rx="10"/>
+<text class="eb c-in" x="550" y="36">INPUT SOURCE 2</text>
+<text class="tt" x="550" y="56">Cost Explorer API</text>
+<text class="ln" x="550" y="74">get_cost_and_usage, reshaped into 4 tables</text>
+<text class="mono-s" x="550" y="91">cost_explorer_api.py · daily granularity</text>
+<rect class="box bx-in" x="878" y="14" width="322" height="88" rx="10"/>
+<text class="eb c-in" x="894" y="36">INPUT SOURCE 3 · DEFAULT</text>
+<text class="tt" x="894" y="56">Local CSV files</text>
+<text class="ln" x="894" y="74">docs/*.csv: service, region, tag, EC2 cost</text>
+<text class="mono-s" x="894" y="91">local_csv.py · no credentials needed</text>
+<path class="flow nohead" d="M351 102 V118"/>
+<path class="flow nohead" d="M695 102 V118"/>
+<path class="flow nohead" d="M1039 102 V118"/>
+<path class="flow nohead" d="M284 118 H1039"/>
+<path class="flow" d="M284 118 V166"/>
+
+<!-- L1 -->
+<rect class="band bd-m1" x="2" y="132" width="1206" height="168" rx="14"/>
+<text class="bcode c-m1" x="18" y="172">L1</text>
+<text class="bname" x="18" y="194">Ingestion</text>
+<text class="bname" x="18" y="211">&amp; Data Quality</text>
+<text class="brole" x="18" y="232">src/inputs · capabilities</text>
+<rect class="box bx-m1" x="190" y="168" width="188" height="112" rx="10"/>
+<text class="eb c-m1" x="206" y="190">FETCH</text>
+<text class="tt" x="206" y="210">Build Sources</text>
+<text class="ln" x="206" y="230">build_sources() from config</text>
+<text class="ln" x="206" y="246">Skips unavailable sources</text>
+<text class="ln" x="206" y="262">fetch() → SourcePayload</text>
+<path class="flow" d="M378 224 H393"/>
+<rect class="box bx-m1" x="395" y="168" width="188" height="112" rx="10"/>
+<text class="eb c-m1" x="411" y="190">VALIDATE</text>
+<text class="tt" x="411" y="210">Validate</text>
+<text class="ln" x="411" y="230">Drops empty rows</text>
+<text class="ln" x="411" y="246">Drops rows with no values</text>
+<text class="ln" x="411" y="262">Logs kept and dropped</text>
+<path class="flow" d="M583 224 H598"/>
+<rect class="box bx-m1" x="600" y="168" width="188" height="112" rx="10"/>
+<text class="eb c-m1" x="616" y="190">DEDUPLICATE</text>
+<text class="tt" x="616" y="210">Deduplicate</text>
+<text class="ln" x="616" y="230">Removes exact-duplicate rows</text>
+<text class="ln" x="616" y="246">Checked table by table</text>
+<text class="ln" x="616" y="262">Logs how many were removed</text>
+<path class="flow" d="M788 224 H803"/>
+<rect class="box bx-m1" x="805" y="168" width="188" height="112" rx="10"/>
+<text class="eb c-m1" x="821" y="190">NORMALIZE</text>
+<text class="tt" x="821" y="210">Normalize</text>
+<text class="ln" x="821" y="230">Column names and casing</text>
+<text class="ln" x="821" y="246">Dates and numbers unified</text>
+<text class="ln" x="821" y="262">Originals kept in _raw</text>
+<path class="flow" d="M993 224 H1008"/>
+<rect class="box bx-m1" x="1010" y="168" width="188" height="112" rx="10"/>
+<text class="eb c-m1" x="1026" y="190">TRACK</text>
+<text class="tt" x="1026" y="210">Track Lineage</text>
+<text class="ln" x="1026" y="230">MetadataTracker per run</text>
+<text class="ln" x="1026" y="246">Sources and record counts</text>
+<text class="ln" x="1026" y="262">Stages run, with timings</text>
+<path class="flow" d="M1104 280 V311 H310 V354"/>
+<rect class="pill" x="556" y="301" width="302" height="20" rx="10"/><text class="pt" x="707" y="315" text-anchor="middle">records per table · same SourcePayload shape</text>
+
+<!-- L2 -->
+<rect class="band bd-m2" x="2" y="322" width="1206" height="290" rx="14"/>
+<text class="bcode c-m2" x="18" y="362">L2</text>
+<text class="bname" x="18" y="384">LLM Pipeline</text>
+<text class="bname" x="18" y="401">Core</text>
+<text class="brole" x="18" y="422">src/pipeline · src/llm</text>
+<a href="#run-graph"><text class="deep c-m2" x="18" y="448">Run graph detail ↓</text></a>
+<text class="brole" x="18" y="545">Bottom row runs</text>
+<text class="brole" x="18" y="560">in parallel, no LLM</text>
+<rect class="box bx-m2" x="190" y="356" width="240" height="108" rx="10"/>
+<text class="eb c-m2" x="206" y="378">STEP 1 · NORMALIZE (LLM)</text>
+<text class="tt" x="206" y="398">Simplify &amp; Normalize</text>
+<text class="ln" x="206" y="418">Runs the L1 clean-up passes first</text>
+<text class="ln" x="206" y="434">LLM maps fields to a common schema</text>
+<text class="ln" x="206" y="450">Flags issues, returns schema_map</text>
+<rect class="box bx-m2" x="450" y="356" width="240" height="108" rx="10"/>
+<text class="eb c-m2" x="466" y="378">STEP 2 · CONTEXT LOAD · CODE</text>
+<text class="tt" x="466" y="398">Enrich &amp; Correlate</text>
+<text class="ln" x="466" y="418">Adds cost tier and date fields</text>
+<text class="ln" x="466" y="434">Totals by service, region and tag</text>
+<text class="ln" x="466" y="450">Z-score anomaly signals (above 2.0)</text>
+<rect class="box bx-m2" x="710" y="356" width="220" height="108" rx="10"/>
+<text class="eb c-m2" x="726" y="378">BASELINE KPIs · CODE</text>
+<text class="tt" x="726" y="398">Top-line Numbers</text>
+<text class="ln" x="726" y="418">Total cost, top service, region</text>
+<text class="ln" x="726" y="434">Average and peak daily cost</text>
+<text class="ln" x="726" y="450">Handed to agents, not re-derived</text>
+<path class="flow" d="M430 410 H448"/>
+<path class="flow" d="M690 410 H708"/>
+<path class="flow nohead" d="M570 464 V478"/>
+<path class="flow nohead" d="M310 478 H820"/>
+<path class="flow" d="M310 478 V490"/>
+<path class="flow" d="M570 478 V490"/>
+<path class="flow" d="M820 478 V490"/>
+<rect class="box bx-m2 dash" x="190" y="492" width="240" height="106" rx="10"/>
+<text class="eb c-m2" x="206" y="514">GUARDRAIL AGENT</text>
+<text class="tt" x="206" y="534">Cost Forecast</text>
+<text class="ln" x="206" y="554">Next 30 days from the daily trend</text>
+<text class="ln" x="206" y="570">Flags growth above 15%</text>
+<text class="mono-s" x="206" y="586">capabilities/forecasting.py</text>
+<rect class="box bx-m2 dash" x="450" y="492" width="240" height="106" rx="10"/>
+<text class="eb c-m2" x="466" y="514">GUARDRAIL AGENT</text>
+<text class="tt" x="466" y="534">Tag Governance</text>
+<text class="ln" x="466" y="554">Finds spend with no project tag</text>
+<text class="ln" x="466" y="570">High severity above a 20% share</text>
+<text class="mono-s" x="466" y="586">capabilities/tag_governance.py</text>
+<rect class="box bx-m2 dash" x="710" y="492" width="220" height="106" rx="10"/>
+<text class="eb c-m2" x="726" y="514">GUARDRAIL AGENT</text>
+<text class="tt" x="726" y="534">Anomaly Root Cause</text>
+<text class="ln" x="726" y="554">Finds the dimension that grew</text>
+<text class="ln" x="726" y="570">most on the spike day</text>
+<text class="mono-s" x="726" y="586">capabilities/root_cause.py</text>
+<text class="cap" x="955" y="346">SUPPORTING SERVICES</text>
+<rect class="svc bx-m2" x="955" y="356" width="245" height="40" rx="8"/><text class="sn" x="967" y="372">LLM client</text><text class="sd" x="967" y="387">OpenRouter · retries · backup API key</text>
+<rect class="svc bx-m2" x="955" y="403" width="245" height="40" rx="8"/><text class="sn" x="967" y="419">Prompt library</text><text class="sd" x="967" y="434">one Markdown prompt per step</text>
+<rect class="svc bx-m2" x="955" y="450" width="245" height="40" rx="8"/><text class="sn" x="967" y="466">Model settings</text><text class="sd" x="967" y="481">model per step · capable ↔ cheap tier</text>
+<rect class="svc bx-m2" x="955" y="497" width="245" height="40" rx="8"/><text class="sn" x="967" y="513">Progress events</text><text class="sd" x="967" y="528">step start / complete → SSE to the UI</text>
+<rect class="svc bx-m2" x="955" y="544" width="245" height="40" rx="8"/><text class="sn" x="967" y="560">LangGraph orchestrator</text><text class="sd" x="967" y="575">built and tested · not yet switched on</text>
+<path class="flow nohead" d="M310 598 V622"/>
+<path class="flow nohead" d="M570 598 V622"/>
+<path class="flow nohead" d="M820 598 V622"/>
+<path class="flow nohead" d="M310 622 H820"/>
+<path class="flow" d="M310 622 V656"/>
+<path class="flow" d="M570 622 V656"/>
+<path class="flow" d="M820 622 V656"/>
+<rect class="pill" x="336" y="612" width="208" height="20" rx="10"/><text class="pt" x="440" y="626" text-anchor="middle">context + guardrail findings</text>
+
+<!-- L3 -->
+<rect class="band bd-m3" x="2" y="632" width="1206" height="210" rx="14"/>
+<text class="bcode c-m3" x="18" y="672">L3</text>
+<text class="bname" x="18" y="694">Analysis Agents</text>
+<text class="bname" x="18" y="711">&amp; Memory</text>
+<text class="brole" x="18" y="732">pipeline/run_* · storage</text>
+<rect class="box bx-m3" x="190" y="658" width="240" height="116" rx="10"/>
+<text class="eb c-m3" x="206" y="680">STEP 3.1 · CHARTS (LLM)</text>
+<text class="tt" x="206" y="700">Visual Insights</text>
+<text class="ln" x="206" y="720">Picks the trends worth plotting</text>
+<text class="ln" x="206" y="736">Bar, line, pie, heatmap, area</text>
+<text class="ln" x="206" y="752">Each spec names x, y and a table</text>
+<rect class="box bx-m3" x="450" y="658" width="240" height="116" rx="10"/>
+<text class="eb c-m3" x="466" y="680">STEP 3.2 · FOUR AGENTS (LLM)</text>
+<text class="tt" x="466" y="700">Analytical Insights</text>
+<text class="ln" x="466" y="720">Cost anomaly · Budget forecast</text>
+<text class="ln" x="466" y="736">Optimisation recommendations</text>
+<text class="ln" x="466" y="752">Usage report (cheap tier)</text>
+<rect class="box bx-m3" x="710" y="658" width="220" height="116" rx="10"/>
+<text class="eb c-m3" x="726" y="680">STEP 3.3 · SUMMARY (LLM)</text>
+<text class="tt" x="726" y="700">Executive Insights</text>
+<text class="ln" x="726" y="720">Key findings and takeaways</text>
+<text class="ln" x="726" y="736">Turns flags into recommendations</text>
+<text class="ln" x="726" y="752">Next steps for the team</text>
+<text class="tiny c-m3" x="440" y="712" text-anchor="middle">∥</text>
+<text class="tiny c-m3" x="440" y="726" text-anchor="middle">par</text>
+<path class="flow" d="M690 716 H708"/>
+<text class="cap" x="955" y="648">MEMORY</text>
+<rect class="box bx-m3" x="955" y="658" width="245" height="50" rx="10"/><text class="tt" x="971" y="679">Redis</text><text class="ln" x="971" y="697">chat answer cache 1h · context 6h</text>
+<rect class="box bx-m3" x="955" y="718" width="245" height="56" rx="10"/><text class="tt" x="971" y="737">PostgreSQL</text><text class="ln" x="971" y="753">agent_responses · every run and chat</text><text class="ln" x="971" y="767">decision_log · every approval step</text>
+<path class="flow nohead" d="M310 774 V852"/>
+<path class="flow nohead" d="M570 774 V852"/>
+<path class="flow nohead" d="M820 774 V852"/>
+<path class="flow nohead" d="M310 852 H820"/>
+<path class="flow" d="M310 852 V886"/>
+<rect class="pill" x="346" y="842" width="188" height="20" rx="10"/><text class="pt" x="440" y="856" text-anchor="middle">charts · analysis · summary</text>
+
+<!-- L4 -->
+<rect class="band bd-m4" x="2" y="862" width="1206" height="224" rx="14"/>
+<text class="bcode c-m4" x="18" y="902">L4</text>
+<text class="bname" x="18" y="924">Output, Approval</text>
+<text class="bname" x="18" y="941">&amp; Delivery</text>
+<text class="brole" x="18" y="962">src/actions · src/aws</text>
+<rect class="box bx-m4" x="190" y="888" width="240" height="116" rx="10"/>
+<text class="eb c-m4" x="206" y="910">STEP 4 · COMBINE · CODE</text>
+<text class="tt" x="206" y="930">Merge All Responses</text>
+<text class="ln" x="206" y="950">Visual, analytical and summary</text>
+<text class="ln" x="206" y="966">Chart specs filled with real data</text>
+<text class="ln" x="206" y="982">Up to 25 points per chart</text>
+<rect class="box bx-m4" x="450" y="888" width="240" height="116" rx="10"/>
+<text class="eb c-m4" x="466" y="910">STEP 5 · FINAL RESPONSE</text>
+<text class="tt" x="466" y="930">Write the Report</text>
+<text class="ln" x="466" y="950">outputs/insights_&lt;time&gt;.json</text>
+<text class="ln" x="466" y="966">Matching Markdown report</text>
+<text class="ln" x="466" y="982">Lineage: sources, stages, timings</text>
+<rect class="box bx-m4" x="710" y="888" width="220" height="116" rx="10"/>
+<text class="eb c-m4" x="726" y="910">PLAN &amp; RISK</text>
+<text class="tt" x="726" y="930">Plan Actions</text>
+<text class="ln" x="726" y="950">Recommendations → actions</text>
+<text class="ln" x="726" y="966">Risk: low / medium / high</text>
+<text class="ln" x="726" y="982">Teams card with Apply links</text>
+<rect class="box bx-m4" x="955" y="888" width="245" height="116" rx="10"/>
+<text class="eb c-m4" x="971" y="910">HUMAN IN THE LOOP</text>
+<text class="tt" x="971" y="930">RE Approval &amp; Apply</text>
+<text class="ln" x="971" y="950">Raise → stage → commit_batch</text>
+<text class="ln" x="971" y="966">CSV or AWS executor</text>
+<text class="ln" x="971" y="982">Write guard · rollback per batch</text>
+<path class="flow" d="M430 946 H448"/>
+<path class="flow" d="M690 946 H708"/>
+<path class="flow" d="M930 946 H953"/>
+<path class="flow fb" d="M1130 888 V776"/>
+<text class="tiny c-m4" x="1138" y="836">decision</text><text class="tiny c-m4" x="1138" y="849">log</text>
+<path class="flow fb both" d="M1077 1004 V1046 H820 V1006"/>
+<rect class="pill pg" x="866" y="1036" width="166" height="20" rx="10"/><text class="pt" x="949" y="1050" text-anchor="middle">unstage · rollback</text>
+<path class="flow" d="M570 1004 V1104"/>
+
+<!-- OUT -->
+<rect class="deliv" x="182" y="1106" width="998" height="86" rx="12"/>
+<text class="bcode c-in" x="18" y="1140">OUT</text><text class="bname" x="18" y="1162">Deliverables</text>
+<rect class="chip" x="196" y="1119" width="186" height="60" rx="8"/><text class="sn" x="208" y="1144">Charts &amp; graphs</text><text class="mono-s" x="208" y="1164">specs + data · dashboard</text>
+<rect class="chip" x="392" y="1119" width="186" height="60" rx="8"/><text class="sn" x="404" y="1144">Key metrics &amp; analysis</text><text class="mono-s" x="404" y="1164">KPIs · anomalies · JSON</text>
+<rect class="chip" x="588" y="1119" width="186" height="60" rx="8"/><text class="sn" x="600" y="1144">Executive summary</text><text class="mono-s" x="600" y="1164">Markdown report</text>
+<rect class="chip" x="784" y="1119" width="186" height="60" rx="8"/><text class="sn" x="796" y="1144">Recommendations</text><text class="mono-s" x="796" y="1164">pending_actions.json</text>
+<rect class="chip" x="980" y="1119" width="186" height="60" rx="8"/><text class="sn" x="992" y="1144">Reports &amp; history</text><text class="mono-s" x="992" y="1164">outputs/ · Postgres</text>
+<path class="flow mc both" d="M1190 1004 V1244"/>
+<rect class="pill pm" x="1010" y="1196" width="170" height="20" rx="10"/><text class="pt" x="1095" y="1210" text-anchor="middle">same approval code path</text>
+<!-- MCP -->
+<rect class="band bd-mcp" x="2" y="1222" width="1206" height="196" rx="14"/>
+<text class="bcode c-mcp" x="18" y="1262">MCP</text><text class="bname" x="18" y="1284">Agent Access</text><text class="bname" x="18" y="1301">&amp; RE Workflow</text><text class="brole" x="18" y="1322">src/mcp_server</text><a href="#mcp"><text class="deep c-mcp" x="18" y="1348">RE-team workflow ↓</text></a>
+<rect class="box bx-mcp" x="190" y="1244" width="188" height="108" rx="10"/><text class="eb c-mcp" x="206" y="1266">MCP CLIENT</text><text class="tt" x="206" y="1286">AI Agent</text><text class="ln" x="206" y="1306">Claude Code or Desktop</text><text class="ln" x="206" y="1322">Calls tools over stdio</text><text class="ln" x="206" y="1338">python mcp_server.py</text>
+<path class="flow" d="M378 1298 H393"/>
+<rect class="box bx-mcp" x="395" y="1244" width="188" height="108" rx="10"/><text class="eb c-mcp" x="411" y="1266">MCP SERVER</text><text class="tt" x="411" y="1286">aws-cost-ops</text><text class="ln" x="411" y="1306">FastMCP · 16 tools</text><text class="ln" x="411" y="1322">Same code as the dashboard</text><text class="ln" x="411" y="1338">No direct AWS tool</text>
+<rect class="box bx-mcp" x="600" y="1244" width="188" height="108" rx="10"/><text class="eb c-mcp" x="616" y="1266">READ · ANY CALLER</text><text class="tt" x="616" y="1286">10 Read Tools</text><text class="ln" x="616" y="1306">List and get recommendations</text><text class="ln" x="616" y="1322">Preview · fleet · cost</text><text class="ln" x="616" y="1338">Metrics · budgets · logs</text>
+<rect class="box bx-mcp" x="805" y="1244" width="188" height="108" rx="10"/><text class="eb c-mcp" x="821" y="1266">EMPLOYEE · NO TOKEN</text><text class="tt" x="821" y="1286">Raise &amp; Withdraw</text><text class="ln" x="821" y="1306">raise_recommendation</text><text class="ln" x="821" y="1322">withdraw_recommendation</text><text class="ln" x="821" y="1338">Queues only, never applies</text>
+<rect class="box bx-mcp" x="1010" y="1244" width="188" height="108" rx="10"/><text class="eb c-mcp" x="1026" y="1266">RE ONLY · re_token</text><text class="tt" x="1026" y="1286">RE Decision Tools</text><text class="ln" x="1026" y="1306">stage / unstage decision</text><text class="ln" x="1026" y="1322">commit_approved_changes</text><text class="ln" x="1026" y="1338">rollback_batch_changes</text>
+<path class="flow nohead" d="M489 1352 V1364 H1104"/>
+<path class="flow" d="M699 1364 V1354"/>
+<path class="flow" d="M904 1364 V1354"/>
+<path class="flow" d="M1104 1364 V1354"/>
+<rect class="pill" x="512" y="1354" width="162" height="20" rx="10"/><text class="pt" x="593" y="1368" text-anchor="middle">policy.py role check</text>
+<rect class="chip" x="190" y="1380" width="1008" height="28" rx="8"/><text class="sn" x="206" y="1398">AUDIT</text><text class="mono-s" x="270" y="1398">outputs/mcp_audit.jsonl records every call, allowed or denied, with secrets removed</text>
+<!-- PLATFORM -->
+<rect class="plat" x="2" y="1436" width="1206" height="50" rx="12"/><text class="cap" x="18" y="1466">PLATFORM</text>
+<text class="pl" x="190" y="1466">Error handling &amp; retries</text>
+<text class="pl" x="360" y="1466">Step-level logging</text>
+<text class="pl" x="510" y="1466">Write guard &amp; RE token</text>
+<text class="pl" x="680" y="1466">Redis caching</text>
+<text class="pl" x="800" y="1466">Thread-pool parallelism</text>
+<text class="pl" x="980" y="1466">Docker Compose · MCP</text>
+</svg></div>
+  <div class="legend">
+    <span><i></i>Data flow</span>
+    <span><i class="dx"></i>Runs in parallel, no LLM</span>
+    <span><i class="fb"></i>Human decision recorded or undone</span>
+    <span><i class="fb" style="border-top-color:var(--mcp)"></i>MCP shares the approval code path</span>
+  </div>
+</section>
+
+<section id="run-graph">
+  <h2>Orchestrator run graph</h2>
+  <p class="sub">These are the steps and fan-outs as built in <code>src/orchestrator.py</code>, using the same step names that appear in the live progress stream. The three guardrail agents run on one thread pool. Charts and the four analysis agents run on a second pool. Only the summary waits for the analysis agents.</p>
+  <div class="scroll"><svg class="dg" viewBox="0 0 1210 570" role="img" aria-labelledby="dg2t"><title id="dg2t">Orchestrator step graph with two parallel fan-outs</title><defs>
+<marker id="bh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahf"/></marker>
+<marker id="bhg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahg"/></marker>
+</defs>
+<circle class="term" cx="34" cy="200" r="22"/><text class="tm" x="34" y="204" text-anchor="middle">START</text>
+<rect class="box bx-in" x="76" y="174" width="112" height="52" rx="9"/><text class="nm" x="132" y="197" text-anchor="middle">inputs</text><text class="sd" x="132" y="214" text-anchor="middle">1 to 3 sources</text>
+<rect class="box bx-m2" x="206" y="174" width="136" height="52" rx="9"/><text class="nm" x="274" y="197" text-anchor="middle">step1</text><text class="sd" x="274" y="214" text-anchor="middle">normalize · LLM</text>
+<rect class="box bx-m2" x="360" y="174" width="152" height="52" rx="9"/><text class="nm" x="436" y="197" text-anchor="middle">step2</text><text class="sd" x="436" y="214" text-anchor="middle">context load · code</text>
+<rect class="box bx-m2 dash" x="546" y="84" width="150" height="52" rx="9"/><text class="nm" x="621" y="107" text-anchor="middle">forecast</text><text class="sd" x="621" y="124" text-anchor="middle">no LLM</text>
+<rect class="box bx-m2 dash" x="546" y="174" width="150" height="52" rx="9"/><text class="nm" x="621" y="197" text-anchor="middle">tag_governance</text><text class="sd" x="621" y="214" text-anchor="middle">no LLM</text>
+<rect class="box bx-m2 dash" x="546" y="264" width="150" height="52" rx="9"/><text class="nm" x="621" y="287" text-anchor="middle">root_cause</text><text class="sd" x="621" y="304" text-anchor="middle">no LLM</text>
+<text class="tiny c-m2" x="621" y="338" text-anchor="middle">ThreadPoolExecutor(3)</text>
+<rect class="box bx-m3" x="740" y="16" width="236" height="48" rx="9"/><text class="nm" x="858" y="37" text-anchor="middle">step3_1 · charts</text><text class="sd" x="858" y="54" text-anchor="middle">LLM · own chart model</text>
+<rect class="box bx-m3" x="740" y="96" width="236" height="48" rx="9"/><text class="nm" x="858" y="117" text-anchor="middle">run_cost_anomaly</text><text class="sd" x="858" y="134" text-anchor="middle">capable tier</text>
+<rect class="box bx-m3" x="740" y="176" width="236" height="48" rx="9"/><text class="nm" x="858" y="197" text-anchor="middle">run_budget_forecast</text><text class="sd" x="858" y="214" text-anchor="middle">capable tier</text>
+<rect class="box bx-m3" x="740" y="256" width="236" height="48" rx="9"/><text class="nm" x="858" y="277" text-anchor="middle">run_optimisation_recommendation</text><text class="sd" x="858" y="294" text-anchor="middle">capable tier · uses baseline KPIs</text>
+<rect class="box bx-m3" x="740" y="336" width="236" height="48" rx="9"/><text class="nm" x="858" y="357" text-anchor="middle">run_usage_report</text><text class="sd" x="858" y="374" text-anchor="middle">cheap tier</text>
+<text class="tiny c-m3" x="858" y="404" text-anchor="middle">ThreadPoolExecutor(5) · 5 concurrent LLM calls</text>
+<rect class="box bx-m3" x="1012" y="176" width="150" height="48" rx="9"/><text class="nm" x="1087" y="197" text-anchor="middle">step3_3</text><text class="sd" x="1087" y="214" text-anchor="middle">summary · LLM</text>
+<rect class="box bx-m4" x="1012" y="456" width="150" height="48" rx="9"/><text class="nm" x="1087" y="477" text-anchor="middle">step4</text><text class="sd" x="1087" y="494" text-anchor="middle">combine · code</text>
+<rect class="box bx-m4" x="800" y="456" width="150" height="48" rx="9"/><text class="nm" x="875" y="477" text-anchor="middle">step5</text><text class="sd" x="875" y="494" text-anchor="middle">write JSON + MD</text>
+<rect class="box bx-m4" x="560" y="456" width="190" height="48" rx="9"/><text class="nm" x="655" y="477" text-anchor="middle">finalize_actions</text><text class="sd" x="655" y="494" text-anchor="middle">plan · risk (LLM) · Teams</text>
+<circle class="term" cx="500" cy="480" r="22"/><text class="tm" x="500" y="484" text-anchor="middle">END</text>
+<rect class="box bx-m4 dash" x="250" y="456" width="190" height="48" rx="9"/><text class="nm" x="345" y="477" text-anchor="middle">RE approval</text><text class="sd" x="345" y="494" text-anchor="middle">a person, after the run</text>
+<path class="flow v" d="M56 200 H74"/>
+<path class="flow v" d="M188 200 H204"/>
+<path class="flow v" d="M342 200 H358"/>
+<path class="flow v nohead" d="M512 200 H529"/>
+<path class="flow v nohead" d="M529 110 V290"/>
+<path class="flow v" d="M529 110 H544"/>
+<path class="flow v" d="M529 200 H544"/>
+<path class="flow v" d="M529 290 H544"/>
+<path class="flow v nohead" d="M696 110 H716"/>
+<path class="flow v nohead" d="M696 200 H716"/>
+<path class="flow v nohead" d="M696 290 H716"/>
+<path class="flow v nohead" d="M716 40 V360"/>
+<path class="flow v" d="M716 40 H738"/>
+<path class="flow v" d="M716 120 H738"/>
+<path class="flow v" d="M716 200 H738"/>
+<path class="flow v" d="M716 280 H738"/>
+<path class="flow v" d="M716 360 H738"/>
+<path class="flow v nohead" d="M976 120 H994"/>
+<path class="flow v nohead" d="M976 200 H994"/>
+<path class="flow v nohead" d="M976 280 H994"/>
+<path class="flow v nohead" d="M976 360 H994"/>
+<path class="flow v nohead" d="M994 120 V360"/>
+<path class="flow v" d="M994 200 H1010"/>
+<path class="flow v" d="M976 40 H1190 V480 H1164"/>
+<text class="tiny c-m3" x="1180" y="30" text-anchor="end">chart specs skip 3.3</text>
+<path class="flow v" d="M1087 224 V454"/>
+<text class="tiny c-m3" x="1095" y="340">analysis +</text><text class="tiny c-m3" x="1095" y="353">summary</text>
+<path class="flow v" d="M1012 480 H952"/>
+<path class="flow v" d="M800 480 H752"/>
+<path class="flow v" d="M560 480 H524"/>
+<path class="flow v fb" d="M655 504 V540 H345 V506"/>
+<rect class="pill pg" x="426" y="530" width="148" height="20" rx="10"/><text class="pt" x="500" y="544" text-anchor="middle">pending_actions.json</text>
+</svg></div>
+  <div class="cards">
+    <div class="card"><h3>Two layers of anomaly detection</h3><p>Step 2 flags spikes with a z-score check in code. The <code>run_cost_anomaly</code> agent then explains them. A spike is still reported if the LLM misses it or fails.</p></div>
+    <div class="card"><h3>Agents never stop the run</h3><p>Each agent catches its own errors and returns an empty result. The rest of the pipeline continues with whatever succeeded.</p></div>
+    <div class="card"><h3>Model tiers</h3><p>Each step has its own model setting. The usage report uses the cheap tier. The other agents use the capable tier.</p><span class="now">Current build: every tier defaults to the same free model</span></div>
+    <div class="card"><h3>LLM client</h3><p>All LLM calls go through <code>src/llm/client.py</code> (OpenRouter). It retries short-lived errors and switches to a backup key on 401, 402, 403 or 429.</p></div>
+    <div class="card"><h3>Write guard</h3><p>Every AWS change passes one guard function. Without <code>AWS_ALLOW_REAL_WRITES=1</code> the change is a dry run, and region and tag allowlists still apply when it is on.</p></div>
+    <div class="card"><h3>Rollback</h3><p>Each instance's state is saved before a batch is committed. Stop, resize and tag changes can be reversed. Terminate is marked as irreversible.</p></div>
+    <div class="card"><h3>MCP server</h3><p>AI agents can list, preview and approve recommendations through MCP tools. Approval tools check the RE-team token, and every call goes to an audit log with secrets removed.</p></div>
+    <div class="card"><h3>LangGraph orchestrator</h3><p><code>src/orchestrator_graph.py</code> rebuilds the same flow as a LangGraph <code>StateGraph</code>, with a real fan-out for the three guardrail agents.</p><span class="now">Current build: tested, not wired in · still uses a single Step 3.2 call</span></div>
+  </div>
+</section>
+
+<section id="mcp">
+  <h2>RE-team MCP workflow</h2>
+  <p class="sub">How an AI agent works with the approval queue through the <code>aws-cost-ops</code> MCP server. Lane A needs no token. Lane B needs the RE-team token. Lane C shows what the server enforces on every call.</p>
+  <div class="scroll"><svg class="dg" viewBox="0 0 1210 500" role="img" aria-labelledby="dg3t"><title id="dg3t">RE-team MCP workflow in three lanes</title>
+<rect class="band bd-in" x="2" y="0" width="1206" height="136" rx="14"/><text class="bcode c-in" x="18" y="34">A</text><text class="bname" x="18" y="56">Employee or</text><text class="bname" x="18" y="73">AI agent</text><text class="brole" x="18" y="94">no token needed</text>
+<rect class="band bd-mcp" x="2" y="176" width="1206" height="136" rx="14"/><text class="bcode c-mcp" x="18" y="210">B</text><text class="bname" x="18" y="232">RE team</text><text class="bname" x="18" y="249">via MCP</text><text class="brole" x="18" y="270">re_token required</text>
+<rect class="band bd-m4" x="2" y="352" width="1206" height="136" rx="14"/><text class="bcode c-m4" x="18" y="386">C</text><text class="bname" x="18" y="408">System</text><text class="bname" x="18" y="425">enforcement</text><text class="brole" x="18" y="446">runs on every call</text>
+<rect class="box bx-in" x="190" y="14" width="188" height="108" rx="10"/><text class="eb c-in" x="206" y="36">STEP 1 · READ</text><text class="tt" x="206" y="56">Review</text><text class="ln" x="206" y="76">list_recommendations</text><text class="ln" x="206" y="92">get_recommendation</text><text class="ln" x="206" y="108">preview_action · no changes</text>
+<path class="flow" d="M378 68 H393"/>
+<rect class="box bx-in" x="395" y="14" width="188" height="108" rx="10"/><text class="eb c-in" x="411" y="36">STEP 2 · RAISE</text><text class="tt" x="411" y="56">Raise for Review</text><text class="ln" x="411" y="76">raise_recommendation</text><text class="ln" x="411" y="92">pending → pending_re</text><text class="ln" x="411" y="108">Queues only, no AWS call</text>
+<rect class="box bx-in dash" x="600" y="14" width="188" height="108" rx="10"/><text class="eb c-in" x="616" y="36">OPTIONAL</text><text class="tt" x="616" y="56">Withdraw</text><text class="ln" x="616" y="76">withdraw_recommendation</text><text class="ln" x="616" y="92">Pull a request back</text><text class="ln" x="616" y="108">Only before a decision</text>
+<path class="flow v" d="M489 122 V188"/>
+<rect class="pill" x="410" y="140" width="158" height="20" rx="10"/><text class="pt" x="489" y="154" text-anchor="middle">status: pending_re</text>
+<rect class="box bx-mcp" x="395" y="190" width="188" height="108" rx="10"/><text class="eb c-mcp" x="411" y="212">STEP 3 · CHECK</text><text class="tt" x="411" y="232">Queue Readiness</text><text class="ln" x="411" y="252">commit_readiness</text><text class="ln" x="411" y="268">Undecided vs staged count</text><text class="ln" x="411" y="284">Savings exposure</text>
+<path class="flow" d="M583 244 H598"/>
+<rect class="box bx-mcp" x="600" y="190" width="188" height="108" rx="10"/><text class="eb c-mcp" x="616" y="212">STEP 4 · STAGE</text><text class="tt" x="616" y="232">Approve or Decline</text><text class="ln" x="616" y="252">stage_recommendation_decision</text><text class="ln" x="616" y="268">Every open request in queue</text><text class="ln" x="616" y="284">Decline needs a reason</text>
+<path class="flow" d="M788 244 H803"/>
+<rect class="box bx-mcp" x="805" y="190" width="188" height="108" rx="10"/><text class="eb c-mcp" x="821" y="212">STEP 5 · COMMIT</text><text class="tt" x="821" y="232">Apply the Batch</text><text class="ln" x="821" y="252">commit_approved_changes</text><text class="ln" x="821" y="268">Refuses while any request</text><text class="ln" x="821" y="284">is still pending_re</text>
+<path class="flow" d="M993 244 H1008"/>
+<rect class="box bx-mcp" x="1010" y="190" width="188" height="108" rx="10"/><text class="eb c-mcp" x="1026" y="212">STEP 6 · UNDO</text><text class="tt" x="1026" y="232">Rollback Batch</text><text class="ln" x="1026" y="252">rollback_batch_changes</text><text class="ln" x="1026" y="268">Stop, resize, tag: reversible</text><text class="ln" x="1026" y="284">Terminate: cannot undo</text>
+<path class="flow fb" d="M650 298 V330 H489 V300"/>
+<rect class="pill pg" x="502" y="320" width="130" height="20" rx="10"/><text class="pt" x="567" y="334" text-anchor="middle">unstage · undo stage</text>
+<rect class="box bx-m4 dash" x="190" y="366" width="188" height="108" rx="10"/><text class="eb c-m4" x="206" y="388">AUDIT</text><text class="tt" x="206" y="408">MCP Audit Log</text><text class="ln" x="206" y="428">outputs/mcp_audit.jsonl</text><text class="ln" x="206" y="444">Every call, allowed or denied</text><text class="ln" x="206" y="460">Secrets removed</text>
+<rect class="box bx-m4" x="395" y="366" width="188" height="108" rx="10"/><text class="eb c-m4" x="411" y="388">QUEUE STATE</text><text class="tt" x="411" y="408">ActionStore</text><text class="ln" x="411" y="428">pending_actions.json</text><text class="ln" x="411" y="444">Status moves step by step</text><text class="ln" x="411" y="460">Shared with the dashboard</text>
+<rect class="box bx-m4" x="600" y="366" width="188" height="108" rx="10"/><text class="eb c-m4" x="616" y="388">POLICY GATE</text><text class="tt" x="616" y="408">require_re_role</text><text class="ln" x="616" y="428">re_token must equal</text><text class="ln" x="616" y="444">RE_TEAM_TOKEN from .env</text><text class="ln" x="616" y="460">Denied calls are logged</text>
+<rect class="box bx-m4" x="805" y="366" width="188" height="108" rx="10"/><text class="eb c-m4" x="821" y="388">EXECUTOR</text><text class="tt" x="821" y="408">CSV or AWS</text><text class="ln" x="821" y="428">Dry run unless</text><text class="ln" x="821" y="444">AWS_ALLOW_REAL_WRITES=1</text><text class="ln" x="821" y="460">Region and tag allowlists</text>
+<rect class="box bx-m4" x="1010" y="366" width="188" height="108" rx="10"/><text class="eb c-m4" x="1026" y="388">RECORDS</text><text class="tt" x="1026" y="408">Decision Log</text><text class="ln" x="1026" y="428">Postgres decision_log</text><text class="ln" x="1026" y="444">Raise, stage, commit, rollback</text><text class="ln" x="1026" y="460">Batch state saved first</text>
+<path class="flow fb" d="M740 298 V364"/>
+<path class="flow fb" d="M904 298 V364"/>
+<path class="flow fb" d="M1104 298 V364"/>
+</svg></div>
+  <div class="legend">
+    <span><i></i>Workflow step</span>
+    <span><i class="fb"></i>Undo path and enforcement links</span>
+    <span><i class="dx"></i>Optional or supporting item</span>
+  </div>
+  <div class="cards">
+    <div class="card"><h3>Same gate as the dashboard</h3><p>The MCP tools call <code>src/actions/approval.py</code>, the same code the web dashboard uses. An agent has no shortcut that a human reviewer does not have.</p></div>
+    <div class="card"><h3>No direct AWS tool</h3><p>Every change is a recommendation that passes raise, stage and commit. Only <code>commit_approved_changes</code> can change AWS or write a CSV row.</p></div>
+    <div class="card"><h3>Batch commit</h3><p>Commit is refused while any request in the queue is still <code>pending_re</code>. The whole queue must be approved or declined first.</p></div>
+    <div class="card"><h3>RE token</h3><p>Stage, unstage, commit and rollback need <code>re_token</code> to match <code>RE_TEAM_TOKEN</code> from <code>.env</code>. Read tools and the two employee tools need no token.</p></div>
+    <div class="card"><h3>Audit trail</h3><p>Every tool call, allowed or denied, is appended to <code>outputs/mcp_audit.jsonl</code> with secrets removed. Approval events also land in the Postgres <code>decision_log</code>.</p></div>
+    <div class="card"><h3>Rollback limits</h3><p>Stop, resize and tag changes can be reversed. Terminated instances and CSV-backend actions cannot, and the result says so instead of skipping them.</p></div>
+  </div>
+  <div class="tbl" style="margin-top:16px"><table>
+    <thead><tr><th>Tool</th><th>Who</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>list_recommendations</code> · <code>get_recommendation</code></td><td><span class="tag t-all">ANY</span></td><td>Read recommendations, optionally by status, with evidence</td></tr>
+      <tr><td><code>preview_action</code></td><td><span class="tag t-all">ANY</span></td><td>Show the AWS operation, targets and estimated monthly saving. Changes nothing</td></tr>
+      <tr><td><code>describe_fleet</code> · <code>get_cost_and_usage</code> · <code>get_metric_statistics</code> · <code>list_budgets</code></td><td><span class="tag t-all">ANY</span></td><td>Read live AWS state in the same shape as the pipeline inputs</td></tr>
+      <tr><td><code>commit_readiness</code> · <code>get_decision_log</code> · <code>get_mcp_audit_log</code></td><td><span class="tag t-all">ANY</span></td><td>Queue status, approval history and raw tool-call history</td></tr>
+      <tr><td><code>raise_recommendation</code> · <code>withdraw_recommendation</code></td><td><span class="tag t-in">EMPLOYEE</span></td><td>Send a recommendation to the RE queue, or pull it back before a decision</td></tr>
+      <tr><td><code>stage_recommendation_decision</code> · <code>unstage_recommendation_decision</code></td><td><span class="tag t-mcp">RE</span></td><td>Stage approve or decline on a queued request, or return it to pending_re</td></tr>
+      <tr><td><code>commit_approved_changes</code></td><td><span class="tag t-mcp">RE</span></td><td>Apply every staged decision as one batch through the CSV or AWS executor</td></tr>
+      <tr><td><code>rollback_batch_changes</code></td><td><span class="tag t-mcp">RE</span></td><td>Undo the reversible changes of a committed batch</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="contracts">
+  <h2>Layer hand-offs</h2>
+  <p class="sub">These are the points where one step's output becomes the next step's input. All hand-offs happen in one Python process, except the ones to the browser, Teams and the databases.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>From → To</th><th>Payload</th><th>Transport</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag t-in">IN</span> → <span class="tag t-m1">L1</span></td><td><code>SourcePayload</code>: kind, name, records per table, notes</td><td>Function return from <code>fetch()</code></td></tr>
+      <tr><td><span class="tag t-m1">L1</span> → <span class="tag t-m2">L2</span></td><td>Validated, deduplicated, normalized records, plus the LLM <code>schema_map</code></td><td>In-process dict</td></tr>
+      <tr><td><span class="tag t-m2">L2</span> → <span class="tag t-m3">L3</span></td><td>Context: records, correlations, business metadata, anomaly signals, forecast, tag findings</td><td>In-process dict, shared read-only by parallel agents</td></tr>
+      <tr><td><span class="tag t-m3">L3</span> → <span class="tag t-m4">L4</span></td><td>Chart specs, analysis (KPIs, anomalies, trends, recommendations), summary</td><td>In-process dicts into <code>run_step4_combine</code></td></tr>
+      <tr><td><span class="tag t-m4">L4</span> → Files</td><td>Report JSON and Markdown, pending actions</td><td><code>outputs/insights_*.json|md</code>, <code>pending_actions.json</code></td></tr>
+      <tr><td><span class="tag t-all">ALL</span> → UI</td><td>Step start and complete events, with timings and step output</td><td>Server-Sent Events from <code>server.py</code></td></tr>
+      <tr><td><span class="tag t-m4">L4</span> → <span class="tag t-m3">L3</span></td><td>Every raise, stage, approve, decline and rollback; every run and chat answer</td><td>Postgres <code>decision_log</code> and <code>agent_responses</code></td></tr>
+      <tr><td><span class="tag t-m4">L4</span> → Teams</td><td>Report card with an Apply link per action</td><td>Incoming webhook, when configured</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="steps">
+  <h2>Reference steps mapped to layers</h2>
+  <p class="sub">Each step and capability from the reference architecture, with the layer and file that implement it. Where the build differs from the reference, the difference is stated.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Reference step</th><th>Layer</th><th>Implementation</th></tr></thead>
+    <tbody>
+      <tr><td>Input sources</td><td><span class="tag t-in">IN</span></td><td><code>cloudwatch_api.py</code>, <code>cost_explorer_api.py</code>, <code>local_csv.py</code>, chosen with <code>--sources</code></td></tr>
+      <tr><td>Data validation · Deduplication</td><td><span class="tag t-m1">L1</span></td><td><code>validation.py</code>, <code>deduplication.py</code>, run at the start of Step 1</td></tr>
+      <tr><td>Normalization · Metadata tracking</td><td><span class="tag t-m1">L1</span></td><td><code>normalization.py</code>; <code>MetadataTracker</code> records sources, stages and timings</td></tr>
+      <tr><td>Step 1 · Simplify &amp; Normalize</td><td><span class="tag t-m2">L2</span></td><td><code>step1_normalize.py</code>: LLM returns table descriptions, a common-schema map and issues</td></tr>
+      <tr><td>Step 2 · Context Load · Enrichment</td><td><span class="tag t-m2">L2</span></td><td><code>step2_context_load.py</code>: enrichment, correlations and z-score anomalies, with no LLM</td></tr>
+      <tr><td>Guardrail agents</td><td><span class="tag t-m2">L2</span></td><td>Added to the reference: forecast, tag governance and root cause, in parallel</td></tr>
+      <tr><td>Step 3.1 · Generate Charts</td><td><span class="tag t-m3">L3</span></td><td><code>step3_1_charts.py</code>. Runs alongside 3.2, not before it. Returns specs, and the dashboard draws them</td></tr>
+      <tr><td>Step 3.2 · Analysis &amp; Metrics</td><td><span class="tag t-m3">L3</span></td><td>Four agents in <code>pipeline/run_*.py</code> replace the single call, with baseline KPIs from code</td></tr>
+      <tr><td>Step 3.3 · Summary</td><td><span class="tag t-m3">L3</span></td><td><code>step3_3_summary.py</code>: findings, takeaways, recommendations, next steps</td></tr>
+      <tr><td>Configurability</td><td><span class="tag t-all">ALL</span></td><td><code>src/config.py</code> and <code>.env</code>: sources, models, backend, write guard, tokens</td></tr>
+      <tr><td>Step 4 · Combine All Responses</td><td><span class="tag t-m4">L4</span></td><td><code>step4_combine.py</code>: one payload, chart specs filled with data</td></tr>
+      <tr><td>Step 5 · Final Response</td><td><span class="tag t-m4">L4</span></td><td><code>step5_finalize.py</code>: JSON and Markdown. PDF, CSV and HTML exports are not implemented</td></tr>
+      <tr><td>Recommendations &amp; actions</td><td><span class="tag t-m4">L4</span></td><td>Added to the reference: <code>planner.py</code>, <code>risk.py</code>, <code>approval.py</code>, <code>executor.py</code>, <code>rollback.py</code></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="demo">
+  <h2>Demo order</h2>
+  <p class="sub">One CSV run followed from input to an approved change. The local CSV source needs no AWS credentials. An OpenRouter API key is needed for the LLM steps.</p>
+  <ol class="demo">
+    <li><span class="tag t-in">IN</span><p>Start Postgres and Redis with <code>docker compose up -d</code>. Open the CSVs in <code>docs/</code> and explain that the two AWS sources produce the same shape.</p></li>
+    <li><span class="tag t-m1">L1</span><p>Run <code>python main.py --query "Which service drove the biggest cost spike?"</code>. Point out the validation, deduplication and normalization counts in the log.</p></li>
+    <li><span class="tag t-m2">L2</span><p>Show the Step 1 schema map, then the Step 2 correlations and anomaly signals. Show the three guardrail agents finishing in parallel.</p></li>
+    <li><span class="tag t-m3">L3</span><p>Show the five concurrent agents, then the summary that uses their results.</p></li>
+    <li><span class="tag t-m4">L4</span><p>Open <code>outputs/insights_*.md</code> for the executive view and the matching <code>.json</code> for charts, KPIs and lineage.</p></li>
+    <li><span class="tag t-m4">L4</span><p>Run <code>python server.py</code> and open <code>http://127.0.0.1:8765</code>. Run the pipeline and watch each step complete live.</p></li>
+    <li><span class="tag t-m4">L4</span><p>Raise a recommendation, stage it as the RE team, and commit the batch. With the CSV backend nothing touches AWS. Close on the write guard and rollback.</p></li>
+  </ol>
+</section>
+
+<footer>Step names, thresholds and model tiers are taken from the cloud-cost-optimization source, with <code>src/orchestrator.py</code> as the active orchestrator. Review before presenting.</footer>
+</div>
+
+<script>
+(function(){
+  var root=document.documentElement, btn=document.getElementById('themeBtn');
+  function cur(){var t=root.getAttribute('data-theme');if(t)return t;return matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}
+  function label(){btn.textContent=cur()==='dark'?'Light theme':'Dark theme';}
+  try{var s=localStorage.getItem('arch-theme');if(s)root.setAttribute('data-theme',s);}catch(e){}
+  label();
+  btn.addEventListener('click',function(){var n=cur()==='dark'?'light':'dark';root.setAttribute('data-theme',n);try{localStorage.setItem('arch-theme',n);}catch(e){}label();});
+})();
+</script>
+
+</body></html>
